@@ -1,0 +1,2702 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Sistem Tempahan Fasiliti Sekolah</title>
+
+    <link rel="manifest" href="manifest.json" id="manifest-link">
+    <link rel="icon" id="favicon-link" href="https://lh3.googleusercontent.com/d/1VSpY8zCMrEp2NTwyftcRPa0J2gVkjvHR">
+    <link rel="apple-touch-icon" id="apple-touch-icon-link" href="https://lh3.googleusercontent.com/d/1VSpY8zCMrEp2NTwyftcRPa0J2gVkjvHR">
+    <meta name="theme-color" content="#1e3a8a">
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        // Design tokens — tema "Navy/Ice Blue" soft-UI (v3.0). SENGAJA extend, bukan ganti:
+        // blue-900/blue-600 dll yg sedia ada kekal sbg navy/accent (dah established seluruh app),
+        // ice-* baru utk canvas lembut + permukaan input "recessed", shadow-soft* ganti pelbagai
+        // shadow-sm/shadow-[...] ad-hoc dgn SATU bahasa elevation navy-tinted yang konsisten.
+        // Guard spt semua penggunaan CDN lain dlm fail ni (XLSX/jspdf typeof-check dsb) — kalau
+        // CDN Tailwind gagal/lambat/disekat firewall sekolah, jangan throw ReferenceError yg boleh
+        // ganggu <script> lain; senyap sahaja & app terus jalan (cuma warna/shadow custom takkan
+        // terpakai, base Tailwind default masih okay kalau CDN tu sendiri sempat load pun).
+        if (typeof tailwind !== 'undefined') {
+            tailwind.config = {
+                theme: {
+                    extend: {
+                        colors: {
+                            ice: { 50: '#F6FAFE', 100: '#EAF3FC', 200: '#D9E9F8', 300: '#BFDAF3' }
+                        },
+                        boxShadow: {
+                            soft: '0 10px 30px -10px rgba(30,58,138,0.15), 0 4px 10px -6px rgba(30,58,138,0.08)',
+                            'soft-md': '0 14px 34px -12px rgba(30,58,138,0.18), 0 6px 14px -6px rgba(30,58,138,0.10)',
+                            'soft-lg': '0 24px 48px -16px rgba(30,58,138,0.28)',
+                            'soft-inset': 'inset 2px 2px 5px rgba(30,64,175,0.10), inset -2px -2px 5px rgba(255,255,255,0.85)'
+                        }
+                    }
+                }
+            };
+        }
+    </script>
+
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <!-- SheetJS (Excel) & jsPDF+autoTable (PDF) — dipakai utk butang muat turun tab Admin > Tempahan sahaja -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(160deg, #EAF3FC 0%, #F6FAFE 45%, #ffffff 100%);
+            background-attachment: fixed;
+        }
+
+        /* Fokus keyboard KEKAL kelihatan pada semua elemen interaktif (bukan setakat input) —
+           tanpa ni, ramai butang ikon-sahaja (logout/edit/delete) tiada indicator fokus langsung. */
+        :focus-visible {
+            outline: 2px solid #2563eb;
+            outline-offset: 2px;
+            border-radius: 6px;
+        }
+
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        .pb-safe { padding-bottom: env(safe-area-inset-bottom, 24px); }
+
+        @keyframes ticker {
+            0% { transform: translateX(100%); }
+            100% { transform: translateX(-100%); }
+        }
+        .animate-ticker {
+            display: inline-block;
+            white-space: nowrap;
+            animation: ticker 15s linear infinite;
+        }
+
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .app-container {
+            max-width: 480px;
+            margin: 0 auto;
+            background-color: #ffffff;
+            min-height: 100vh;
+            box-shadow: 0 25px 50px -12px rgba(30, 58, 138, 0.25);
+            position: relative;
+            overflow-x: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .main-content {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding-bottom: 90px;
+            background-color: #F6FAFE;
+        }
+
+        /* Spark loader — logo sekolah + gelang "kilat digital" berputar sekeliling */
+        .spark-loader { position: relative; width: 64px; height: 64px; margin: 0 auto; }
+        .spark-loader.spark-sm { width: 34px; height: 34px; }
+        .spark-loader .spark-face {
+            position: absolute; inset: 14%; border-radius: 9999px; overflow: hidden;
+            background: #eff6ff; display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 2px 10px rgba(30, 64, 175, 0.15);
+        }
+        .spark-loader .spark-face img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .spark-loader .spark-face .ph, .spark-loader .spark-face .ph-fill { color: #2563eb; font-size: 1.4rem; }
+        .spark-loader.spark-sm .spark-face .ph, .spark-loader.spark-sm .spark-face .ph-fill { font-size: 0.85rem; }
+        .spark-loader .spark-ring {
+            position: absolute; inset: 0; border-radius: 9999px;
+            background: conic-gradient(from 0deg, transparent 0deg, transparent 235deg, #93c5fd 300deg, #2563eb 345deg, #2563eb 360deg);
+            -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3.5px));
+            mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3.5px));
+            animation: spark-spin 1s linear infinite;
+        }
+        @keyframes spark-spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="text-slate-800 antialiased">
+
+    <!-- BOOT LOADER — logo + gelang kilat, PENUH SKRIN, tunjuk dari saat klik link masuk sistem
+         (bukan setakat dalam page). Guna inline style (bukan setakat class Tailwind) sengaja,
+         supaya posisi/z-index terpakai serta-merta semasa HTML di-parse, tanpa tunggu CSS/JS
+         lain siap muat. Ditutup dlm window.onload lepas loadInitData() + render pertama siap. -->
+    <div id="boot-loader" style="position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:#ffffff;transition:opacity .35s ease;">
+        <div class="flex flex-col items-center gap-3">
+            <div class="spark-loader"><div class="spark-face" id="boot-loader-face"><i class="ph-fill ph-lightning"></i></div><div class="spark-ring"></div></div>
+            <p class="text-xs text-slate-400 font-medium">Memuatkan...</p>
+        </div>
+    </div>
+    <script>
+        // Cuba papar logo sekolah SERTA-MERTA drpd cache lawatan lepas (localStorage), sblm
+        // apa-apa fetch bermula. Kalau takde cache (lawatan pertama), kekal ikon kilat generik.
+        // Sengaja duplicate corak URL lh3 di sini (bukan panggil resolveImageUrl) sebab script
+        // utama & fungsi tu belum wujud lagi di titik ni — ni snippet boot sahaja, kecil & terasing.
+        (function () {
+            try {
+                var lastLogo = localStorage.getItem('sfs_last_logo');
+                if (lastLogo) {
+                    document.getElementById('boot-loader-face').innerHTML =
+                        '<img src="https://lh3.googleusercontent.com/d/' + lastLogo + '" alt="Memuatkan" ' +
+                        'onerror="this.parentElement.innerHTML=\'<i class=&quot;ph-fill ph-lightning&quot;></i>\'">';
+                }
+            } catch (e) { /* localStorage tak tersedia — kekal ikon default */ }
+        })();
+    </script>
+
+    <div class="app-container">
+
+        <!-- DEMO MODE BANNER (auto tersorok bila CONFIG.API_URL dah diisi dgn URL Web App sebenar) -->
+        <div id="demo-banner" class="hidden bg-amber-400 text-amber-950 text-[11px] font-bold text-center py-1.5 px-3">
+            <i class="ph-fill ph-wrench"></i> Demo Mode — backend belum disambung, data tidak disimpan. Lihat SETUP.md.
+        </div>
+
+        <!-- MAIN CONTENT AREA -->
+        <main id="main-content" class="main-content hide-scrollbar">
+
+            <!-- ================= HOME VIEW ================= -->
+            <div id="view-home" class="fade-in block">
+                <!-- HERO — v3.1: reskin "Modern SaaS Minimalist (Emerald & Slate)" mengikut rujukan
+                     admin. Semua ID diikat JS (hero-bg/hero-title/hero-subtitle/hero-today-count/
+                     hero-logo-wrap) KEKAL sama — hanya lapisan visual/susun atur berubah. -->
+                <div class="relative bg-gradient-to-br from-emerald-900 via-emerald-800 to-teal-900 rounded-b-[2.5rem] shadow-xl mb-6 overflow-hidden">
+                    <div id="hero-bg" class="absolute inset-0 bg-cover bg-center opacity-60"></div>
+                    <!-- Scrim gelap (gradient bawah->atas) supaya teks sentiasa boleh dibaca atas
+                         sebarang gambar background — teknik sama macam carousel Fasiliti Tersedia. -->
+                    <div class="absolute inset-0 bg-gradient-to-t from-emerald-950/95 via-emerald-900/60 to-emerald-900/20 pointer-events-none"></div>
+
+                    <div class="relative z-10 pt-6 pb-6 px-6 text-white">
+                        <div class="flex justify-between items-center mb-5">
+                            <div id="hero-logo-wrap" class="w-11 h-11 rounded-full bg-white/15 backdrop-blur-sm border border-white/20 flex items-center justify-center overflow-hidden shrink-0">
+                                <i class="ph-fill ph-lightning text-xl"></i>
+                            </div>
+                            <a href="#" onclick="navigate('auth');return false;" title="Log Masuk Admin" class="w-10 h-10 rounded-full bg-white/15 backdrop-blur-sm border border-white/20 flex items-center justify-center hover:bg-white/25 transition-colors shrink-0">
+                                <i class="ph ph-key text-lg"></i>
+                            </a>
+                        </div>
+
+                        <div class="flex justify-center mb-3">
+                            <span class="inline-flex items-center gap-1.5 bg-white/15 backdrop-blur-sm border border-white/20 text-emerald-50 text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 rounded-full">
+                                <i class="ph-fill ph-sparkle"></i> Sistem Pintar
+                            </span>
+                        </div>
+                        <h1 id="hero-title" class="text-[26px] leading-tight font-extrabold mb-1.5 text-center">Selamat Datang,</h1>
+                        <p id="hero-subtitle" class="text-emerald-100 mb-6 text-sm text-center max-w-[280px] mx-auto">Sistem Tempahan Fasiliti Bersepadu</p>
+
+                        <div class="bg-white/15 backdrop-blur-md rounded-2xl p-4 border border-white/20 flex items-center justify-between shadow-lg">
+                            <button onclick="openTodayUsageModal()" class="text-left group" title="Klik utk lihat bilik mana yg sedang digunakan hari ini">
+                                <p class="text-xs text-emerald-100 uppercase tracking-wide font-medium flex items-center gap-1">Tempahan Hari Ini <i class="ph ph-info text-[13px] opacity-70 group-hover:opacity-100"></i></p>
+                                <p class="text-2xl font-bold mt-1 group-hover:opacity-80 transition-opacity"><span id="hero-today-count">-</span> <span class="text-sm font-normal text-emerald-100">Bilik</span></p>
+                            </button>
+                            <button onclick="navigate('booking')" class="bg-emerald-400 text-emerald-950 px-5 py-2.5 rounded-full font-bold text-sm shadow-md hover:bg-emerald-300 transition-all transform active:scale-95 inline-flex items-center gap-1.5">
+                                Tempah Sekarang <i class="ph-bold ph-arrow-right"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Bento Actions — 2 tindakan utama, "terapung" sedikit atas hero (gaya modern
+                     SaaS/bento) supaya senang dicapai jari tanpa scroll, termasuk Semak Status
+                     yang dulu cuma boleh dicapai via bottom-nav (kini nampak terus di Laman Utama). -->
+                <div class="px-6 -mt-5 relative z-20 grid grid-cols-2 gap-3 mb-6">
+                    <button onclick="navigate('booking')" class="bg-white rounded-2xl p-4 shadow-soft-md border border-ice-200/60 text-left hover:shadow-soft-lg hover:-translate-y-0.5 transition-all active:scale-[0.98]">
+                        <div class="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600 mb-3">
+                            <i class="ph-fill ph-calendar-plus text-xl"></i>
+                        </div>
+                        <p class="font-bold text-slate-800 text-sm">Tempah Fasiliti</p>
+                        <p class="text-[11px] text-slate-400 mt-0.5">Mula tempahan baru</p>
+                    </button>
+                    <button onclick="navigate('account')" class="bg-white rounded-2xl p-4 shadow-soft-md border border-ice-200/60 text-left hover:shadow-soft-lg hover:-translate-y-0.5 transition-all active:scale-[0.98]">
+                        <div class="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600 mb-3">
+                            <i class="ph-fill ph-receipt text-xl"></i>
+                        </div>
+                        <p class="font-bold text-slate-800 text-sm">Semak Status</p>
+                        <p class="text-[11px] text-slate-400 mt-0.5">Tempahan sedia ada</p>
+                    </button>
+                </div>
+
+                <!-- Announcement Ticker — reskin emerald, jadi bar terapung bucu bulat (bukan lagi
+                     jalur amber tepi-ke-tepi). #ticker-text id & .animate-ticker (CSS keyframe)
+                     KEKAL — cuma bekas/warna berubah. -->
+                <div class="mx-6 mb-6 rounded-2xl bg-emerald-50 border border-emerald-100 overflow-hidden flex items-center shadow-sm">
+                    <div class="pl-3.5 pr-3 py-2.5 text-white flex-shrink-0 z-10 bg-emerald-500 self-stretch flex items-center gap-1.5 rounded-l-2xl">
+                        <i class="ph-fill ph-megaphone text-sm"></i>
+                        <span class="text-[10px] font-bold uppercase tracking-wide">Makluman</span>
+                    </div>
+                    <div class="overflow-hidden w-full relative h-6 px-3">
+                        <div class="animate-ticker text-sm text-emerald-800 font-medium absolute top-0" id="ticker-text">
+                            Memuatkan pengumuman...
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Facilities Carousel — v3.1: satu slide besar (bukan lagi row scroll berbilang
+                     kad), auto-scroll + swipe + anak panah desktop + dots (lihat initHomeCarousel()
+                     & renderHomeRooms()). #home-rooms-container KEKAL sbg "track" — anak terus dia
+                     mesti 1 <div> per bilik (Playwright kira `#home-rooms-container > div`). -->
+                <div class="px-6 pb-2">
+                    <div class="flex justify-between items-end mb-4">
+                        <h2 class="text-lg font-bold text-slate-800">Fasiliti Tersedia</h2>
+                        <span class="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full">
+                            <i class="ph-bold ph-arrows-left-right"></i> Leret
+                        </span>
+                    </div>
+
+                    <div class="relative rounded-2xl overflow-hidden shadow-lg group touch-pan-y select-none" id="facility-carousel">
+                        <div class="flex transition-transform duration-500 ease-out w-full h-[250px] md:h-[400px]" id="home-rooms-container">
+                            <!-- Rooms injected via JS (renderHomeRooms) -->
+                        </div>
+
+                        <!-- Anak panah desktop — muncul bila hover atas carousel (group-hover), tersembunyi di mobile -->
+                        <button onclick="homeCarouselPrev()" aria-label="Fasiliti sebelum" class="hidden md:flex absolute left-3 top-1/2 -translate-y-1/2 z-20 w-9 h-9 rounded-full bg-black/30 backdrop-blur-md text-white items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/50">
+                            <i class="ph-bold ph-caret-left"></i>
+                        </button>
+                        <button onclick="homeCarouselNext()" aria-label="Fasiliti seterusnya" class="hidden md:flex absolute right-3 top-1/2 -translate-y-1/2 z-20 w-9 h-9 rounded-full bg-black/30 backdrop-blur-md text-white items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/50">
+                            <i class="ph-bold ph-caret-right"></i>
+                        </button>
+
+                        <!-- Dot indicators -->
+                        <div class="absolute bottom-3 right-4 z-20 flex items-center gap-1.5" id="home-carousel-dots"></div>
+                    </div>
+                </div>
+
+                <!-- Footer (admin-editable) — link "Log Masuk Admin" v2.2: dah pindah ke ikon
+                     kunci penjuru kanan-atas hero (lihat atas), bukan lagi di sini. -->
+                <div class="px-6 pb-4 pt-2 text-center">
+                    <p id="app-footer-text" class="text-[11px] text-slate-400">Copyright © SMK Sri Kukup 2026</p>
+                </div>
+            </div>
+
+            <!-- ================= BOOKING VIEW ================= -->
+            <div id="view-booking" class="fade-in hidden px-5 pt-6">
+                <div class="flex items-center gap-3 mb-6">
+                    <button id="btn-back" onclick="goBackBooking()" class="p-2 bg-white rounded-full shadow-soft border border-ice-200 text-slate-600 hover:bg-ice-50 transition-colors hidden">
+                        <i class="ph ph-arrow-left text-xl"></i>
+                    </button>
+                    <div>
+                        <h1 id="booking-title" class="text-2xl font-bold text-slate-800">Pilih Tarikh</h1>
+                        <p id="booking-subtitle" class="text-sm text-slate-500">Langkah 1 dari 4</p>
+                    </div>
+                </div>
+
+                <div class="flex gap-1.5 mb-8" id="booking-progress">
+                    <div class="h-1.5 flex-1 rounded-full bg-blue-600 transition-all duration-300"></div>
+                    <div class="h-1.5 flex-1 rounded-full bg-slate-200 transition-all duration-300"></div>
+                    <div class="h-1.5 flex-1 rounded-full bg-slate-200 transition-all duration-300"></div>
+                    <div class="h-1.5 flex-1 rounded-full bg-slate-200 transition-all duration-300"></div>
+                </div>
+
+                <!-- STEP 1: CALENDAR -->
+                <div id="step-1" class="block fade-in">
+                    <div class="bg-white rounded-3xl p-5 shadow-soft border border-ice-200/60">
+                        <div class="flex justify-between items-center mb-6">
+                            <button onclick="changeMonth(-1)" class="p-2 hover:bg-slate-100 rounded-full text-slate-600"><i class="ph ph-caret-left text-lg"></i></button>
+                            <h3 id="calendar-month-year" class="font-bold text-slate-800 text-lg">Ogos 2026</h3>
+                            <button onclick="changeMonth(1)" class="p-2 hover:bg-slate-100 rounded-full text-slate-600"><i class="ph ph-caret-right text-lg"></i></button>
+                        </div>
+                        <div class="grid grid-cols-7 gap-1 text-center mb-2">
+                            <div class="text-xs font-semibold text-slate-400">Ah</div>
+                            <div class="text-xs font-semibold text-slate-400">Is</div>
+                            <div class="text-xs font-semibold text-slate-400">Se</div>
+                            <div class="text-xs font-semibold text-slate-400">Ra</div>
+                            <div class="text-xs font-semibold text-slate-400">Kh</div>
+                            <div class="text-xs font-semibold text-blue-500">Ju</div>
+                            <div class="text-xs font-semibold text-slate-400">Sa</div>
+                        </div>
+                        <div id="calendar-grid" class="grid grid-cols-7 gap-1 text-center">
+                            <!-- Days injected via JS -->
+                        </div>
+                        <div class="flex items-center gap-3 mt-4 pt-4 border-t border-ice-200 text-[11px] text-slate-400">
+                            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-red-200 inline-block"></span> Tarikh Off (klik utk sebab)</span>
+                            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full ring-2 ring-blue-500 inline-block"></span> Hari Ini</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- STEP 2: TIME SELECTION (dipilih SEBELUM bilik) -->
+                <div id="step-2" class="hidden fade-in">
+                    <div class="bg-ice-100 border border-ice-200/60 p-4 rounded-2xl mb-4 flex items-center gap-3">
+                        <i class="ph ph-calendar-blank text-2xl text-blue-600"></i>
+                        <div>
+                            <p class="text-xs font-medium text-blue-600 uppercase">Tarikh Terpilih</p>
+                            <p id="display-selected-date" class="font-bold text-slate-800">-</p>
+                        </div>
+                    </div>
+
+                    <h3 class="font-bold text-slate-800 mb-2 flex items-center gap-2">
+                        <i class="ph ph-clock text-blue-600"></i> Pilih Slot Masa
+                    </h3>
+                    <p class="text-[11px] text-slate-400 mb-4">Klik slot MULA, kemudian slot AKHIR utk pilih julat berterusan (atau klik sekali sahaja utk 1 slot). Kotak kelabu = bukan waktu tempahan.</p>
+                    <div id="time-slots-container" class="grid grid-cols-2 gap-3 mb-4">
+                        <!-- Time slots injected via JS -->
+                    </div>
+                    <div id="time-selection-footer"></div>
+                </div>
+
+                <!-- STEP 3: ROOM SELECTION (available ikut tarikh+masa terpilih) -->
+                <div id="step-3" class="hidden fade-in">
+                    <div class="bg-white border border-ice-200 p-4 rounded-2xl mb-6 shadow-soft flex items-center justify-between">
+                        <div>
+                            <p class="text-xs text-slate-500">Tarikh</p>
+                            <p id="display-selected-date-2" class="font-bold text-slate-800">-</p>
+                        </div>
+                        <div class="text-right">
+                            <p class="text-xs text-slate-500">Masa</p>
+                            <p id="display-selected-time-summary" class="font-bold text-blue-600">-</p>
+                        </div>
+                    </div>
+                    <h3 class="font-bold text-slate-800 mb-3 flex items-center gap-2">
+                        <i class="ph ph-door-open text-blue-600"></i> Pilih Fasiliti
+                    </h3>
+                    <div id="room-list-container" class="space-y-4">
+                        <!-- Rooms list injected via JS -->
+                    </div>
+                </div>
+
+                <!-- STEP 4: FINAL FORM (v2.1: tak perlu login/akaun langsung — isi terus) -->
+                <div id="step-4" class="hidden fade-in">
+                    <div class="bg-blue-900 text-white rounded-3xl p-5 mb-6 relative overflow-hidden shadow-soft-lg">
+                        <div class="absolute -right-4 -top-4 w-24 h-24 bg-white opacity-10 rounded-full blur-xl"></div>
+                        <h3 class="font-bold mb-4 opacity-90">Ringkasan Tempahan</h3>
+                        <div class="grid grid-cols-2 gap-4 text-sm relative z-10">
+                            <div>
+                                <p class="text-blue-200 text-xs">Fasiliti</p>
+                                <p class="font-semibold truncate" id="summary-room">-</p>
+                            </div>
+                            <div>
+                                <p class="text-blue-200 text-xs">Tarikh</p>
+                                <p class="font-semibold" id="summary-date">-</p>
+                            </div>
+                            <div class="col-span-2 border-t border-white/20 pt-3">
+                                <p class="text-blue-200 text-xs">Masa</p>
+                                <p class="font-semibold" id="summary-time">-</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <form id="booking-form" onsubmit="handleFinalSubmit(event)" class="space-y-4">
+                        <p id="final-form-error" class="hidden text-red-600 text-xs bg-red-50 border border-red-100 rounded-lg px-3 py-2"></p>
+                        <div class="relative">
+                            <label class="block text-sm font-medium text-slate-700 mb-1">Nama Pemohon *</label>
+                            <input type="text" id="final-applicantName" name="applicantName" required autocomplete="off" placeholder="Taip utk cari nama guru, atau taip terus"
+                                oninput="filterTeacherSuggestions(this.value)" onfocus="filterTeacherSuggestions(this.value)" onblur="setTimeout(hideTeacherSuggestions, 150)"
+                                class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-4 py-3 outline-none focus:border-blue-500 transition-all">
+                            <div id="teacher-suggestions" class="hidden absolute z-20 left-0 right-0 mt-1 bg-white border border-ice-200 rounded-xl shadow-soft-lg max-h-48 overflow-y-auto"></div>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">Tujuan *</label>
+                            <input type="text" name="purpose" required placeholder="Contoh: Mesyuarat PIBG" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-4 py-3 outline-none focus:border-blue-500 transition-all">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">Jabatan / Organisasi *</label>
+                            <input type="text" id="final-department" name="department" required placeholder="Contoh: Panitia Sains" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-4 py-3 outline-none focus:border-blue-500 transition-all">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">Email *</label>
+                            <input type="email" id="final-email" name="email" required placeholder="email@sekolah.edu.my" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-4 py-3 outline-none focus:border-blue-500 transition-all">
+                            <p class="text-[11px] text-slate-400 mt-1">Notifikasi status tempahan &amp; rujukan utk Semak Status akan dihantar ke emel ni.</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">No. Telefon *</label>
+                            <input type="tel" id="final-phone" name="phone" required placeholder="012-3456789" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-4 py-3 outline-none focus:border-blue-500 transition-all">
+                        </div>
+
+                        <div class="pt-4 pb-8">
+                            <button type="submit" class="w-full bg-blue-600 text-white font-bold rounded-xl py-4 shadow-xl shadow-blue-600/30 hover:bg-blue-700 active:scale-[0.98] transition-all flex items-center justify-center gap-2">
+                                Sahkan Tempahan <i class="ph-bold ph-check-circle"></i>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- STEP 5: SUCCESS (PENDING) -->
+                <div id="step-5" class="hidden fade-in text-center py-10">
+                    <div class="w-24 h-24 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                        <i class="ph ph-hourglass-high text-5xl text-amber-500"></i>
+                    </div>
+                    <h2 class="text-2xl font-bold text-slate-800 mb-2">Permohonan Diterima</h2>
+                    <p class="text-slate-500 mb-4 px-4">
+                        Status tempahan anda kini <span class="font-bold text-amber-500 bg-amber-50 px-2 py-0.5 rounded">PENDING</span>. Kelulusan akan dimaklumkan melalui emel oleh Admin.
+                    </p>
+                    <p class="text-xs text-slate-400 mb-6 px-4 flex items-center justify-center gap-1.5">
+                        <i class="ph-fill ph-envelope-simple text-emerald-500"></i> Emel pengesahan telah dihantar kepada anda &amp; admin.
+                    </p>
+
+                    <div class="bg-ice-100 border border-ice-200/60 rounded-2xl p-4 text-left mb-8">
+                        <div class="flex justify-between items-center mb-3 border-b border-ice-200 pb-2">
+                            <span class="text-sm text-slate-500">ID Tempahan:</span>
+                            <span class="font-mono font-bold text-blue-600" id="ticket-id">#BK-1029</span>
+                        </div>
+                        <div class="space-y-1">
+                            <p class="text-sm font-medium text-slate-800" id="ticket-room">-</p>
+                            <p class="text-xs text-slate-500" id="ticket-datetime">-</p>
+                        </div>
+                    </div>
+
+                    <button onclick="resetApp()" class="text-blue-600 font-bold bg-blue-50 px-6 py-3 rounded-xl hover:bg-blue-100 transition-colors w-full">
+                        Kembali ke Laman Utama
+                    </button>
+                </div>
+
+            </div>
+
+            <!-- ================= AUTH VIEW (Log Masuk Admin sahaja — v2.1, bukan public) ================= -->
+            <!-- Dicapai HANYA melalui link "Log Masuk Admin" kat footer Laman Utama — bukan
+                 sebahagian flow booking (booking dah tak perlukan akaun langsung), & bukan
+                 nav-bar utama (sebab tu, sengaja tak highlight mana2 butang nav bila di sini). -->
+            <div id="view-auth" class="fade-in hidden px-6 py-8">
+                <a href="#" onclick="navigate('home');return false;" class="text-sm text-slate-500 hover:underline flex items-center gap-1 mb-4"><i class="ph ph-arrow-left"></i> Kembali ke Laman Utama</a>
+                <div class="text-center mb-6">
+                    <div class="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                        <i class="ph ph-lock-key text-3xl text-blue-600"></i>
+                    </div>
+                    <h2 class="text-xl font-bold text-slate-800" id="auth-title">Log Masuk Admin</h2>
+                </div>
+
+                <!-- SETUP WIZARD — cipta admin PERTAMA (v2.3): dipapar automatik gantikan borang -->
+                <!-- login bila sheet Users KOSONG (state.initData.needsSetup true, lihat navigate() -->
+                <!-- & setAuthMode()) — supaya client produk ni TAK PERLU buka Apps Script editor -->
+                <!-- langsung selepas paste code + deploy. Lepas admin pertama wujud, borang ni -->
+                <!-- automatik "tutup" sendiri (backend tolak SETUP_ALREADY_DONE) & tak muncul lagi. -->
+                <form id="setup-form" onsubmit="handleSetupFirstAdmin(event)" class="hidden space-y-4 bg-white p-5 rounded-3xl border border-ice-200/60 shadow-soft">
+                    <p class="text-xs text-slate-500 -mt-1 mb-2">Sistem ni belum ada akaun admin lagi. Cipta akaun admin PERTAMA di bawah — lepas ni anda boleh urus semua bilik, tetapan &amp; pengguna lain terus dari Admin Panel.</p>
+                    <p id="setup-error" class="hidden text-red-600 text-xs bg-red-50 border border-red-100 rounded-lg px-3 py-2"></p>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-1">Nama Penuh</label>
+                        <input type="text" name="name" required placeholder="Cth: Ahmad bin Ali" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-4 py-3 outline-none focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-1">Alamat Emel</label>
+                        <input type="email" name="email" required placeholder="email@sekolah.edu.my" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-4 py-3 outline-none focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-1">Kata Laluan</label>
+                        <input type="password" name="password" required minlength="6" placeholder="Min 6 aksara" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-4 py-3 outline-none focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-1">Sahkan Kata Laluan</label>
+                        <input type="password" name="confirmPassword" required minlength="6" placeholder="Taip semula password" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-4 py-3 outline-none focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all">
+                    </div>
+                    <button type="submit" class="w-full bg-blue-600 text-white font-bold rounded-xl py-3.5 mt-2 shadow-lg shadow-blue-600/30 hover:bg-blue-700 active:scale-95 transition-all">
+                        Cipta Akaun Admin &amp; Log Masuk
+                    </button>
+                </form>
+
+                <!-- LOGIN (admin/staff sahaja — tiada lagi pendaftaran awam) -->
+                <form id="login-form" onsubmit="handleLogin(event)" class="space-y-4 bg-white p-5 rounded-3xl border border-ice-200/60 shadow-soft">
+                    <p id="login-error" class="hidden text-xs rounded-lg px-3 py-2"></p>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-1">Alamat Emel</label>
+                        <input type="email" name="email" required placeholder="email@sekolah.edu.my" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-4 py-3 outline-none focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-1">Kata Laluan</label>
+                        <input type="password" name="password" required placeholder="••••••••" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-4 py-3 outline-none focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all">
+                    </div>
+                    <button type="submit" class="w-full bg-blue-600 text-white font-bold rounded-xl py-3.5 mt-2 shadow-lg shadow-blue-600/30 hover:bg-blue-700 active:scale-95 transition-all">
+                        Log Masuk
+                    </button>
+                    <p class="text-center text-sm"><a href="#" onclick="setAuthMode('forgot-request');return false;" class="text-slate-500 hover:underline">Lupa password?</a></p>
+                </form>
+
+                <!-- FORGOT PASSWORD: REQUEST -->
+                <form id="forgot-request-form" onsubmit="handleForgotRequest(event)" class="hidden space-y-4 bg-white p-5 rounded-3xl border border-ice-200/60 shadow-soft">
+                    <p class="text-xs text-slate-500 -mt-1 mb-2">Masukkan emel anda. Kod reset 6-digit akan dihantar ke emel tersebut (sah 30 minit).</p>
+                    <p id="forgot-request-error" class="hidden text-red-600 text-xs bg-red-50 border border-red-100 rounded-lg px-3 py-2"></p>
+                    <input type="email" name="email" required placeholder="Alamat Emel" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-4 py-3 outline-none focus:border-blue-500 transition-all">
+                    <button type="submit" class="w-full bg-blue-600 text-white font-bold rounded-xl py-3.5 mt-2 shadow-lg shadow-blue-600/30 hover:bg-blue-700 active:scale-95 transition-all">
+                        Hantar Kod Reset
+                    </button>
+                    <p class="text-center text-sm"><a href="#" onclick="setAuthMode('login');return false;" class="text-slate-500 hover:underline">Kembali log masuk</a></p>
+                </form>
+
+                <!-- FORGOT PASSWORD: CONFIRM -->
+                <form id="forgot-confirm-form" onsubmit="handleForgotConfirm(event)" class="hidden space-y-4 bg-white p-5 rounded-3xl border border-ice-200/60 shadow-soft">
+                    <p class="text-xs text-slate-500 -mt-1 mb-2">Semak emel anda untuk kod 6-digit, kemudian tetapkan password baru.</p>
+                    <p id="forgot-confirm-error" class="hidden text-red-600 text-xs bg-red-50 border border-red-100 rounded-lg px-3 py-2"></p>
+                    <input type="text" name="resetCode" required maxlength="6" placeholder="Kod 6-Digit" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-4 py-3 outline-none focus:border-blue-500 tracking-[0.3em] text-center font-bold transition-all">
+                    <input type="password" name="newPassword" required minlength="6" placeholder="Password Baru (min 6 aksara)" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-4 py-3 outline-none focus:border-blue-500 transition-all">
+                    <button type="submit" class="w-full bg-blue-600 text-white font-bold rounded-xl py-3.5 mt-2 shadow-lg shadow-blue-600/30 hover:bg-blue-700 active:scale-95 transition-all">
+                        Tetapkan Password Baru
+                    </button>
+                </form>
+            </div>
+
+            <!-- ================= SEMAK STATUS VIEW (dulu "Akaun Saya" — v2.1: public, tiada login) ================= -->
+            <div id="view-account" class="fade-in hidden px-5 pt-6 pb-10">
+                <h1 class="text-2xl font-bold text-slate-800 mb-1">Semak Status Tempahan</h1>
+                <p class="text-sm text-slate-500 mb-6">Masukkan emel <b>atau</b> no. telefon yang sama macam masa buat tempahan.</p>
+
+                <form id="status-check-form" onsubmit="handleCheckStatus(event)" class="space-y-3 bg-white p-4 rounded-2xl border border-ice-200/60 shadow-soft mb-6">
+                    <p id="status-check-error" class="hidden text-red-600 text-xs bg-red-50 border border-red-100 rounded-lg px-3 py-2"></p>
+                    <input type="text" id="status-check-identifier" name="identifier" required placeholder="Emel atau No. Telefon" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-4 py-3 text-sm outline-none focus:border-blue-500">
+                    <button type="submit" class="w-full bg-blue-600 text-white font-bold rounded-xl py-3 text-sm shadow-lg shadow-blue-600/30 hover:bg-blue-700 active:scale-95 transition-all">Semak Status</button>
+                </form>
+
+                <div id="status-check-results"></div>
+            </div>
+
+            <!-- ================= ADMIN VIEW ================= -->
+            <div id="view-admin" class="fade-in hidden px-5 pt-6 pb-10">
+                <div class="flex justify-between items-center mb-4">
+                    <h1 class="text-2xl font-bold text-slate-800">Admin Panel</h1>
+                    <button onclick="handleLogout()" title="Log Keluar" class="w-10 h-10 flex items-center justify-center rounded-full bg-red-50 text-red-600 hover:bg-red-100 shadow-soft transition-colors shrink-0">
+                        <i class="ph ph-sign-out text-lg"></i>
+                    </button>
+                </div>
+
+                <div class="flex gap-2 overflow-x-auto hide-scrollbar mb-6 -mx-5 px-5">
+                    <button onclick="loadAdminTab('bookings')" data-tab="bookings" class="admin-tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-semibold border">Tempahan</button>
+                    <button onclick="loadAdminTab('stats')" data-tab="stats" class="admin-tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-semibold border">Statistik</button>
+                    <button onclick="loadAdminTab('rooms')" data-tab="rooms" class="admin-tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-semibold border">Bilik</button>
+                    <button onclick="loadAdminTab('blocked')" data-tab="blocked" class="admin-tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-semibold border">Tarikh Off</button>
+                    <button onclick="loadAdminTab('timeslots')" data-tab="timeslots" class="admin-tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-semibold border">Masa</button>
+                    <button onclick="loadAdminTab('teachers')" data-tab="teachers" class="admin-tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-semibold border">Guru</button>
+                    <button onclick="loadAdminTab('users')" data-tab="users" class="admin-tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-semibold border">Pengguna</button>
+                    <button onclick="loadAdminTab('settings')" data-tab="settings" class="admin-tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-semibold border">Tetapan</button>
+                    <button onclick="loadAdminTab('audit')" data-tab="audit" class="admin-tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-semibold border">Log Audit</button>
+                </div>
+
+                <div id="admin-tab-content"></div>
+            </div>
+
+        </main>
+
+        <!-- BOTTOM NAVIGATION — v3.2: "fixed" (bukan lagi "absolute") supaya tab ni KEKAL
+             terpaku di bawah skrin tanpa bergerak/scroll sekali dgn kandungan, macam app-bar
+             native (rujukan: video i-Akaun KWSP yg admin bagi). "absolute" bergantung penuh pd
+             .app-container jadi bounded-height container yg overflow betul² dlm main-content
+             sahaja — pada mobile sebenar (bkn desktop devtools), tingkah laku viewport-height
+             (100vh) selalu tak konsisten & boleh punca .app-container "tumbuh" lebih drpd skrin,
+             tarik nav turun sekali dgn scroll. "fixed" terus terikat viewport, elak isu ni terus.
+             left-1/2 + -translate-x-1/2 + max-w-[480px] kekalkan ia center align sama macam
+             .app-container pada skrin desktop/tablet lebar (pada mobix sebenar tiada beza sebab
+             viewport dah < 480px). -->
+        <nav class="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[480px] bg-white/90 backdrop-blur-md border-t border-ice-200 shadow-soft px-4 pt-3 pb-safe flex justify-around items-center z-50">
+            <button onclick="navigate('home')" id="nav-home" class="flex flex-col items-center gap-1 w-16 text-blue-600 transition-colors">
+                <div class="p-1.5 rounded-full bg-blue-50" id="nav-icon-home">
+                    <i class="ph-fill ph-house text-2xl"></i>
+                </div>
+                <span class="text-[10px] font-bold">Utama</span>
+            </button>
+
+            <button onclick="navigate('booking')" id="nav-booking" class="flex flex-col items-center gap-1 w-16 text-slate-400 hover:text-slate-600 transition-colors">
+                <div class="p-1.5 rounded-full bg-transparent" id="nav-icon-booking">
+                    <i class="ph ph-calendar-plus text-2xl"></i>
+                </div>
+                <span class="text-[10px] font-bold">Tempah</span>
+            </button>
+
+            <button onclick="navigate('account')" id="nav-account" class="flex flex-col items-center gap-1 w-16 text-slate-400 hover:text-slate-600 transition-colors">
+                <div class="p-1.5 rounded-full bg-transparent" id="nav-icon-account">
+                    <i class="ph ph-receipt text-2xl"></i>
+                </div>
+                <span class="text-[10px] font-bold">Status</span>
+            </button>
+
+            <button onclick="navigate('admin')" id="nav-admin" class="hidden flex-col items-center gap-1 w-16 text-slate-400 hover:text-slate-600 transition-colors">
+                <div class="p-1.5 rounded-full bg-transparent" id="nav-icon-admin">
+                    <i class="ph ph-shield-check text-2xl"></i>
+                </div>
+                <span class="text-[10px] font-bold">Admin</span>
+            </button>
+        </nav>
+    </div>
+
+    <!-- ================= GLOBAL OVERLAYS (galeri gambar / confirm / toast) ================= -->
+    <div id="gallery-modal" class="hidden fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-4" onclick="if(event.target===this) closeRoomGallery()">
+        <div class="relative w-full max-w-md">
+            <button onclick="closeRoomGallery()" class="absolute -top-10 right-0 text-white text-2xl p-2"><i class="ph ph-x"></i></button>
+            <div class="bg-white rounded-2xl overflow-hidden shadow-soft-lg">
+                <div id="gallery-track-wrap" class="relative overflow-hidden aspect-[4/3] bg-slate-100 touch-pan-y">
+                    <div id="gallery-track" class="flex h-full transition-transform duration-300 ease-out"></div>
+                    <button onclick="galleryStep(-1)" id="gallery-prev" class="absolute left-2 top-1/2 -translate-y-1/2 bg-white/80 hover:bg-white p-2 rounded-full shadow"><i class="ph ph-caret-left"></i></button>
+                    <button onclick="galleryStep(1)" id="gallery-next" class="absolute right-2 top-1/2 -translate-y-1/2 bg-white/80 hover:bg-white p-2 rounded-full shadow"><i class="ph ph-caret-right"></i></button>
+                </div>
+                <div class="p-3 flex items-center justify-between gap-2">
+                    <p id="gallery-room-name" class="font-bold text-slate-800 text-sm truncate"></p>
+                    <div id="gallery-dots" class="flex gap-1 shrink-0"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- v2.4: senarai "siapa guna bilik mana hari ni" — dibuka bila klik bilangan "Tempahan
+         Hari Ini" kat Hero. PUBLIC (tiada login), jadi content SENGAJA hanya bilik/masa/jabatan
+         (bukan nama/emel/phone pemohon) — lihat todayUsage dlm apiInit_ (Code.gs). -->
+    <div id="today-usage-modal" class="hidden fixed inset-0 bg-black/60 z-[105] flex items-end sm:items-center justify-center p-0 sm:p-6" onclick="if(event.target===this) closeTodayUsageModal()">
+        <div class="bg-white rounded-t-3xl sm:rounded-3xl p-5 max-w-sm w-full shadow-soft-lg max-h-[80vh] flex flex-col">
+            <div class="flex items-center justify-between mb-1 shrink-0">
+                <p class="font-bold text-slate-800">Penggunaan Bilik Hari Ini</p>
+                <button onclick="closeTodayUsageModal()" class="text-slate-400 hover:text-slate-600 p-1"><i class="ph ph-x"></i></button>
+            </div>
+            <p class="text-xs text-slate-400 mb-3 shrink-0">Ikut jabatan sahaja (bukan nama pemohon), utk privasi.</p>
+            <div id="today-usage-list" class="overflow-y-auto space-y-2 -mx-1 px-1"></div>
+        </div>
+    </div>
+
+    <div id="confirm-modal" class="hidden fixed inset-0 bg-black/60 z-[105] flex items-center justify-center p-6">
+        <div class="bg-white rounded-3xl p-5 max-w-xs w-full shadow-soft-lg">
+            <p id="confirm-modal-title" class="font-bold text-slate-800 mb-1"></p>
+            <p id="confirm-modal-msg" class="text-sm text-slate-500 mb-4"></p>
+            <div class="flex gap-2">
+                <button onclick="closeConfirmModal()" class="flex-1 bg-slate-100 text-slate-700 font-bold py-2.5 rounded-xl text-sm">Batal</button>
+                <button id="confirm-modal-ok" class="flex-1 bg-red-600 text-white font-bold py-2.5 rounded-xl text-sm">Sahkan</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Prompt modal generik (ganti native prompt() — konsisten dgn confirm-modal, dipakai
+         cth utk "Tukar Nama" dlm tab Admin > Guru) -->
+    <div id="prompt-modal" class="hidden fixed inset-0 bg-black/60 z-[105] flex items-center justify-center p-6">
+        <div class="bg-white rounded-3xl p-5 max-w-xs w-full shadow-soft-lg">
+            <p id="prompt-modal-title" class="font-bold text-slate-800 mb-3"></p>
+            <input type="text" id="prompt-modal-input" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500 mb-4">
+            <div class="flex gap-2">
+                <button onclick="closePromptModal()" class="flex-1 bg-slate-100 text-slate-700 font-bold py-2.5 rounded-xl text-sm">Batal</button>
+                <button id="prompt-modal-ok" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl text-sm">Simpan</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast" class="hidden fixed left-1/2 -translate-x-1/2 bottom-24 z-[110] w-[90%] max-w-sm">
+        <div id="toast-inner" class="bg-slate-900 text-white rounded-2xl shadow-soft-lg p-4 flex gap-3 items-start">
+            <i id="toast-icon" class="ph-fill ph-warning-circle text-xl text-amber-400 shrink-0 mt-0.5"></i>
+            <div class="min-w-0">
+                <p id="toast-title" class="font-bold text-sm"></p>
+                <p id="toast-msg" class="text-xs text-slate-300 mt-0.5"></p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // =================================================================
+        // CONFIG — tampal URL Web App Apps Script anda di sini lepas deploy.
+        // Selagi tak ditukar, app akan jalan dalam DEMO MODE (data palsu, tak
+        // disimpan) supaya boleh preview UI tanpa backend. Lihat SETUP.md.
+        // =================================================================
+        const CONFIG = {
+            API_URL: 'https://script.google.com/macros/s/AKfycbx7eoBkMkAvTpAO7BukHFpLcC0kkFwKVVSia4P2S6-lRiCKVdgUNDoEqSln80XQSnY/exec'
+        };
+
+        function isBackendConfigured() {
+            return typeof CONFIG.API_URL === 'string' && CONFIG.API_URL.indexOf('https://script.google.com') === 0;
+        }
+
+        const MONTHS = ['Januari', 'Februari', 'Mac', 'April', 'Mei', 'Jun', 'Julai', 'Ogos', 'September', 'Oktober', 'November', 'Disember'];
+
+        const DEMO_ROOMS = [
+            { id: 'r1', name: 'Bilik Mesyuarat Utama', images: ['https://images.unsplash.com/photo-1517502884422-41eaead166d4?auto=format&fit=crop&q=80&w=800', 'https://images.unsplash.com/photo-1560439514-4e9645039924?auto=format&fit=crop&q=80&w=800'], capacity: 20, type: 'Mesyuarat', features: 'Smart TV 65", Sistem Audio, Penghawa Dingin', status: 'active' },
+            { id: 'r2', name: 'Makmal Komputer Bestari', images: ['https://images.unsplash.com/photo-1516321497487-e288fb19713f?auto=format&fit=crop&q=80&w=800'], capacity: 35, type: 'Makmal', features: '35 Komputer, Projektor, WiFi Laju', status: 'active' },
+            { id: 'r3', name: 'Dewan Kuliah Al-Farabi', images: ['https://images.unsplash.com/photo-1505373877841-8d25f7d46678?auto=format&fit=crop&q=80&w=800', 'https://images.unsplash.com/photo-1475721027785-f74eccf877e2?auto=format&fit=crop&q=80&w=800'], capacity: 120, type: 'Dewan', features: 'PA System, Dwi-Projektor, Pentas', status: 'active' }
+        ];
+        const DEMO_TIME_NORMAL = [
+            "7.25-8.00", "8.00-8.35", "8.35-9.10", "9.10-9.45", "9.45-10.20",
+            "10.20-10.40", "10.40-11.15", "11.15-11.50", "11.50-12.25", "12.25-1.00",
+            "1.00-1.35", "1.35-2.10", "2.10-2.45", "2.45-3.20", "3.20-3.40",
+            "3.40-4.15", "4.15-4.50", "4.50-5.25", "5.30-6.05", "6.05-6.40"
+        ].map(t => ({ label: t, disabled: false }));
+        const DEMO_TIME_FRIDAY = [
+            ["7.25-8.10", false], ["8.10-8.45", false], ["8.45-9.20", false], ["9.20-9.55", false],
+            ["9.55-10.20: Rehat", true], ["10.15-10.50", false], ["10.50-11.25", false], ["11.25-12.00", false],
+            ["2.20-2.45: Sinar Hidayah", true], ["2.45-3.20", false], ["3.20-3.40: Rehat", true],
+            ["3.40-4.15", false], ["4.15-4.50", false], ["4.50-5.20", false], ["5.20-5.30: Solat Asar", true],
+            ["5.30-6.05", false], ["6.05-6.40", false]
+        ].map(([label, disabled]) => ({ label, disabled }));
+        const DEMO_SETTINGS = {
+            heroTitle: 'Selamat Datang,', heroSubtitle: 'Sistem Tempahan Fasiliti Bersepadu',
+            heroImage: 'https://i.postimg.cc/sX4mPf42/image.png',
+            tickerMessage: 'Pengumuman: Penyelenggaraan pelayan pada hujung minggu ini. Sila buat tempahan awal.',
+            schoolName: 'SMK Sri Kukup', schoolLogo: '', footerText: 'Copyright © SMK Sri Kukup 2026 (Demo)',
+            contactEmail: 'admin@sekolah.edu.my', driveParentFolderId: ''
+        };
+        const DEMO_TEACHERS = ['Ahmad bin Ismail', 'Chua Mei Ling', 'Fatimah binti Zainal', 'Muthu a/l Krishnan', 'Nurul Ain binti Hassan', 'Tan Wei Jian'];
+        let demoBookings = [];
+
+        // v2.1: booking dah tak perlukan akaun — demoUsers/demoCurrentEmail (login demo pemohon)
+        // DIBUANG. 'login' pun sengaja tak disokong dlm demo mode lagi: login kini admin-sahaja,
+        // & SEMUA aksi admin (baris "action.indexOf('admin')===0" di bawah) memang disekat
+        // kategori dlm demo mode — jadi login demo takkan boleh demo apa2 pun, elok terus jelas
+        // dari awal drpd biar orang login "berjaya" lepas tu buntu kat setiap klik admin.
+        function demoBookedSlots(roomId, date) {
+            return demoBookings
+                .filter(b => b.roomId === roomId && b.date === date && (b.status === 'pending' || b.status === 'approved'))
+                .reduce((acc, b) => acc.concat(b.timeSlots || []), []);
+        }
+        function demoIdentifierMatches(b, identifier) {
+            const id = String(identifier || '').trim().toLowerCase();
+            if (!id) return false;
+            const email = String(b.email || '').trim().toLowerCase();
+            if (email && email === id) return true;
+            const idDigits = id.replace(/[^0-9]/g, '');
+            const phoneDigits = String(b.phone || '').replace(/[^0-9]/g, '');
+            return !!(phoneDigits && idDigits.length >= 7 && phoneDigits === idDigits);
+        }
+
+        function demoApiCall(action, payload) {
+            if (action.indexOf('admin') === 0) {
+                return { ok: false, error: 'Admin Panel perlukan backend Apps Script yang dah disambungkan. Lihat SETUP.md untuk langkah deploy.', code: 'DEMO_MODE' };
+            }
+            switch (action) {
+                case 'init': {
+                    const activeDemoBookings = demoBookings.filter(b => b.status === 'pending' || b.status === 'approved');
+                    const todayUsage = activeDemoBookings.map(b => ({
+                        roomId: b.roomId,
+                        roomName: (DEMO_ROOMS.find(r => r.id === b.roomId) || {}).name || b.roomId,
+                        timeSlots: b.timeSlots || [],
+                        department: b.department || '-'
+                    })).sort((a, b) => a.roomName.localeCompare(b.roomName));
+                    return { ok: true, data: { rooms: DEMO_ROOMS, settings: DEMO_SETTINGS, timeslotsNormal: DEMO_TIME_NORMAL, timeslotsFriday: DEMO_TIME_FRIDAY, blockedDates: [], teachers: DEMO_TEACHERS, todayCount: activeDemoBookings.length, todayUsage: todayUsage } };
+                }
+                case 'availableRooms': {
+                    const wanted = payload.timeSlots || [];
+                    const data = DEMO_ROOMS.map(r => {
+                        const bookedSlots = demoBookedSlots(r.id, payload.date);
+                        const conflict = wanted.some(t => bookedSlots.indexOf(t) !== -1);
+                        return Object.assign({}, r, conflict ? { available: false, unavailableReason: 'Bertindih dengan tempahan sedia ada (demo).' } : { available: true });
+                    });
+                    return { ok: true, data: data };
+                }
+                case 'createBooking': {
+                    if (!payload.email) return { ok: false, error: 'Emel wajib diisi.' };
+                    const wanted = payload.timeSlots || [];
+                    const bookedSlots = demoBookedSlots(payload.roomId, payload.date);
+                    const clash = wanted.some(t => bookedSlots.indexOf(t) !== -1);
+                    if (clash) return { ok: false, error: 'Slot masa ni baru sahaja ditempah (demo).', code: 'SLOT_TAKEN' };
+                    const id = 'DEMO-' + Math.floor(1000 + Math.random() * 9000);
+                    demoBookings.push(Object.assign({ status: 'pending', createdAt: Date.now() }, payload, { id: id }));
+                    return { ok: true, data: { bookingId: id, status: 'pending', timeSlots: wanted, email: payload.email } };
+                }
+                case 'checkBookingStatus': {
+                    if (!payload.identifier) return { ok: false, error: 'Sila masukkan emel atau no. telefon.' };
+                    const matches = demoBookings.filter(b => demoIdentifierMatches(b, payload.identifier))
+                        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+                    return { ok: true, data: matches };
+                }
+                case 'cancelBooking': {
+                    const b = demoBookings.find(x => x.id === payload.bookingId);
+                    if (!b) return { ok: false, error: 'Tempahan tidak dijumpai.' };
+                    if (!demoIdentifierMatches(b, payload.identifier)) return { ok: false, error: 'Emel/no. telefon tidak sepadan dengan tempahan ni.', code: 'FORBIDDEN' };
+                    if (b.status !== 'pending' && b.status !== 'approved') return { ok: false, error: 'Tempahan ni dah ' + (b.status === 'cancelled' ? 'dibatalkan' : 'ditolak') + ', tak boleh dibatalkan lagi.' };
+                    b.status = 'cancelled';
+                    return { ok: true, data: { bookingId: b.id, status: 'cancelled' } };
+                }
+                case 'requestPasswordReset':
+                case 'confirmPasswordReset':
+                    return { ok: false, error: 'Ciri reset password perlukan backend sebenar (emel tak boleh dihantar dalam demo mode).', code: 'DEMO_MODE' };
+                case 'setupFirstAdmin':
+                    return { ok: false, error: 'Setup Wizard perlukan backend Apps Script yang dah disambungkan. Lihat SETUP.md untuk langkah deploy.', code: 'DEMO_MODE' };
+                default:
+                    return { ok: false, error: 'Action tidak disokong dalam demo mode: ' + action, code: 'DEMO_MODE' };
+            }
+        }
+
+        // --- API LAYER ---
+        async function apiCall(action, payload, needsAuth) {
+            payload = payload || {};
+            if (!isBackendConfigured()) return demoApiCall(action, payload);
+
+            const token = needsAuth ? localStorage.getItem('sfs_token') : null;
+            if (needsAuth && !token) return { ok: false, error: 'Sila log masuk dahulu.', code: 'AUTH_REQUIRED' };
+
+            try {
+                // SENGAJA tak set header Content-Type — elak CORS preflight yang gagal
+                // pada Apps Script Web App (lihat nota dalam Code.gs).
+                const res = await fetch(CONFIG.API_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: action, token: token, payload: payload })
+                });
+                return await res.json();
+            } catch (err) {
+                return { ok: false, error: 'Tak dapat hubungi server. Semak internet, atau URL CONFIG.API_URL belum betul.', code: 'NETWORK_ERROR' };
+            }
+        }
+
+        // --- STATE ---
+        let state = {
+            currentView: 'home',
+            bookingStep: 1,
+            selectedDate: null,
+            selectedDateStr: null,
+            selectedRoom: null,
+            selectedTimeSlots: [],
+            timeRangeAnchor: null,
+            currentMonth: new Date().getMonth(),
+            currentYear: new Date().getFullYear(),
+            currentUser: null,
+            initData: null,
+            adminTab: 'bookings',
+            adminBookingFilter: 'pending',
+            homeCarouselIndex: 0,
+            homeCarouselTimer: null,
+            homeCarouselRooms: []
+        };
+        let forgotEmail = '';
+        let adminRoomsCache = [];
+        let adminTimeslotsDraft = { normal: [], friday: [] };
+        let adminTimeslotsDay = 'normal';
+        let galleryState = { images: [], index: 0 };
+        let adminBookingsCache = [];
+        let adminTeachersCache = [];
+
+        // --- Util: escaping (data sekarang datang dari Sheet / input pengguna, bukan hardcoded) ---
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str === null || str === undefined ? '' : String(str);
+            return div.innerHTML;
+        }
+        function escapeAttr(str) {
+            return String(str === null || str === undefined ? '' : str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+        function featuresArray(room) {
+            return String(room.features || '').split(',').map(s => s.trim()).filter(Boolean);
+        }
+        // Terima URL penuh (https://...) ATAU Drive file ID mentah — kalau file ID, bina URL
+        // guna corak lh3.googleusercontent.com (bypass skrin "confirm" Drive, tapi corak ni
+        // TIDAK RASMI/tak didokumenkan Google — boleh berubah pada bila-bila masa).
+        function resolveImageUrl(value) {
+            if (!value) return '';
+            if (/^https?:\/\//i.test(value)) return value;
+            return 'https://lh3.googleusercontent.com/d/' + value;
+        }
+        function firstRoomImageUrl(room) {
+            if (room.images && room.images.length) return resolveImageUrl(room.images[0]);
+            return '';
+        }
+        function roomImageHtml(room) {
+            const url = firstRoomImageUrl(room);
+            if (url) {
+                return `<img src="${escapeAttr(url)}" class="w-full h-full object-cover" alt="${escapeAttr(room.name)}" onerror="this.parentElement.innerHTML='<div class=&quot;w-full h-full bg-slate-100 flex items-center justify-center text-slate-300 text-3xl&quot;><i class=&quot;ph ph-image&quot;></i></div>'">`;
+            }
+            return `<div class="w-full h-full bg-slate-100 flex items-center justify-center text-slate-300 text-3xl"><i class="ph ph-image"></i></div>`;
+        }
+        // Lencana kategori (badge) berwarna ikut room.type — tiada medan warna dlm data admin,
+        // jadi warna dijana SECARA KONSISTEN drpd nama jenis (hash ringkas) supaya "Dewan Seminar"
+        // sentiasa dapat warna sama setiap kali dipaparkan (bukan random tiap render). UI sahaja —
+        // tak sentuh/tambah medan data admin langsung.
+        const CATEGORY_BADGE_PALETTE = [
+            { bg: 'bg-emerald-500', text: 'text-white' },
+            { bg: 'bg-blue-500', text: 'text-white' },
+            { bg: 'bg-purple-500', text: 'text-white' },
+            { bg: 'bg-amber-500', text: 'text-white' },
+            { bg: 'bg-rose-500', text: 'text-white' },
+            { bg: 'bg-cyan-500', text: 'text-white' },
+        ];
+        function categoryBadgeStyle(type) {
+            const str = String(type || '');
+            let hash = 0;
+            for (let i = 0; i < str.length; i++) hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
+            return CATEGORY_BADGE_PALETTE[hash % CATEGORY_BADGE_PALETTE.length];
+        }
+        function fmtDateStr(dateObj) {
+            const p = n => String(n).padStart(2, '0');
+            return `${dateObj.getFullYear()}-${p(dateObj.getMonth() + 1)}-${p(dateObj.getDate())}`;
+        }
+        function showFormError(elId, msg) {
+            const el = document.getElementById(elId);
+            if (!el) return;
+            el.textContent = msg || 'Ralat tidak diketahui.';
+            el.classList.remove('hidden');
+        }
+        function clearFormError(elId) {
+            const el = document.getElementById(elId);
+            if (!el) return;
+            el.textContent = '';
+            el.classList.add('hidden');
+        }
+        function statusBadge(status) {
+            const map = { pending: 'bg-amber-50 text-amber-600', approved: 'bg-emerald-50 text-emerald-600', rejected: 'bg-red-50 text-red-500', cancelled: 'bg-slate-100 text-slate-500' };
+            const label = { pending: 'PENDING', approved: 'DILULUSKAN', rejected: 'DITOLAK', cancelled: 'DIBATALKAN' }[status] || String(status).toUpperCase();
+            return `<span class="text-[10px] font-bold px-2 py-0.5 rounded shrink-0 ${map[status] || 'bg-slate-100 text-slate-500'}">${label}</span>`;
+        }
+        function adminErrorBlock(msg) {
+            return `<div class="bg-red-50 border border-red-100 text-red-600 text-sm rounded-xl p-4">${escapeHtml(msg || 'Ralat memuatkan data.')}</div>`;
+        }
+        // Label ringkas drpd array slot, cth "7.25-8.00" (1 slot) atau "8.35 – 10.05 (2 slot)"
+        function formatSlotRangeClient(labels) {
+            if (!labels || !labels.length) return '-';
+            if (labels.length === 1) return labels[0];
+            const first = labels[0], last = labels[labels.length - 1];
+            const firstStart = String(first).split('-')[0];
+            const lastEndRaw = String(last).split('-')[1] || last;
+            const lastEnd = String(lastEndRaw).split(':')[0].trim();
+            return `${firstStart} – ${lastEnd} (${labels.length} slot)`;
+        }
+        // "2026-08-31" -> "31 Ogos 2026". Balik string asal kalau format tak dijangka
+        // (elak pecah paparan drpd data pelik, drpd baling error).
+        function formatDateLabel(dateStr) {
+            const parts = String(dateStr || '').split('-');
+            if (parts.length !== 3) return String(dateStr || '-');
+            const y = Number(parts[0]), m = Number(parts[1]), d = Number(parts[2]);
+            if (!y || !m || !d || m < 1 || m > 12) return String(dateStr || '-');
+            return `${d} ${MONTHS[m - 1]} ${y}`;
+        }
+
+        // --- Loading indicator (logo sekolah + gelang kilat digital berputar) ---
+        function loaderHtml(opts) {
+            opts = opts || {};
+            const logoId = state.initData && state.initData.settings ? state.initData.settings.schoolLogo : null;
+            const logoUrl = resolveImageUrl(logoId);
+            const face = logoUrl
+                ? `<img src="${escapeAttr(logoUrl)}" alt="Memuatkan" onerror="this.parentElement.innerHTML='&lt;i class=&quot;ph-fill ph-lightning&quot;&gt;&lt;/i&gt;'">`
+                : `<i class="ph-fill ph-lightning"></i>`;
+            const label = opts.label || 'Memuatkan...';
+            return `<div class="flex flex-col items-center justify-center gap-3 py-8">
+                <div class="spark-loader ${opts.small ? 'spark-sm' : ''}"><div class="spark-face">${face}</div><div class="spark-ring"></div></div>
+                ${opts.hideLabel ? '' : `<p class="text-xs text-slate-400 font-medium">${escapeHtml(label)}</p>`}
+            </div>`;
+        }
+
+        // --- Toast (notis ringkas, cth: sebab tarikh off) ---
+        let toastTimer = null;
+        function showToast(title, msg, kind) {
+            const icons = { warning: 'ph-warning-circle text-amber-400', error: 'ph-x-circle text-red-400', success: 'ph-check-circle text-emerald-400', info: 'ph-info text-blue-400' };
+            document.getElementById('toast-icon').className = 'ph-fill ' + (icons[kind] || icons.info) + ' text-xl shrink-0 mt-0.5';
+            document.getElementById('toast-title').textContent = title;
+            document.getElementById('toast-msg').textContent = msg;
+            const toast = document.getElementById('toast');
+            toast.classList.remove('hidden');
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => toast.classList.add('hidden'), 4500);
+        }
+
+        // --- Confirm modal generik (ganti native confirm() utk tindakan musnah) ---
+        function showConfirmModal(title, msg, onConfirm) {
+            document.getElementById('confirm-modal-title').textContent = title;
+            document.getElementById('confirm-modal-msg').textContent = msg;
+            const okBtn = document.getElementById('confirm-modal-ok');
+            const newOk = okBtn.cloneNode(true);
+            okBtn.parentNode.replaceChild(newOk, okBtn);
+            newOk.addEventListener('click', () => { closeConfirmModal(); onConfirm(); });
+            document.getElementById('confirm-modal').classList.remove('hidden');
+        }
+        function closeConfirmModal() { document.getElementById('confirm-modal').classList.add('hidden'); }
+
+        // --- v2.4: modal "Penggunaan Bilik Hari Ini" (dibuka drpd klik bilangan kat Hero) ---
+        function openTodayUsageModal() {
+            const usage = (state.initData && state.initData.todayUsage) || [];
+            const list = document.getElementById('today-usage-list');
+            if (!usage.length) {
+                list.innerHTML = '<p class="text-sm text-slate-400 text-center py-8">Tiada bilik digunakan hari ini lagi.</p>';
+            } else {
+                list.innerHTML = usage.map(u => `
+                    <div class="bg-ice-50 border border-ice-200/60 rounded-xl p-3">
+                        <p class="font-bold text-slate-800 text-sm">${escapeHtml(u.roomName)}</p>
+                        <p class="text-xs text-slate-500 mt-0.5">${escapeHtml(formatSlotRangeClient(u.timeSlots || []))}</p>
+                        <p class="text-xs text-slate-400 mt-0.5"><i class="ph ph-buildings"></i> ${escapeHtml(u.department || '-')}</p>
+                    </div>
+                `).join('');
+            }
+            document.getElementById('today-usage-modal').classList.remove('hidden');
+        }
+        function closeTodayUsageModal() { document.getElementById('today-usage-modal').classList.add('hidden'); }
+
+        // --- Prompt modal generik (ganti native prompt()) ---
+        function showPromptModal(title, defaultValue, onConfirm) {
+            document.getElementById('prompt-modal-title').textContent = title;
+            const input = document.getElementById('prompt-modal-input');
+            input.value = defaultValue || '';
+            const okBtn = document.getElementById('prompt-modal-ok');
+            const newOk = okBtn.cloneNode(true);
+            okBtn.parentNode.replaceChild(newOk, okBtn);
+            newOk.addEventListener('click', () => {
+                const val = input.value.trim();
+                if (!val) return;
+                closePromptModal();
+                onConfirm(val);
+            });
+            document.getElementById('prompt-modal').classList.remove('hidden');
+            setTimeout(() => input.focus(), 50);
+        }
+        function closePromptModal() { document.getElementById('prompt-modal').classList.add('hidden'); }
+
+        // --- Cadangan nama guru (dropdown carian) utk medan Nama Pemohon ---
+        // Guna onmousedown (bukan onclick) pada setiap cadangan supaya ia jalan SEBELUM
+        // event blur input (yg hide kotak ni) sempat berlaku — corak standard utk combobox.
+        // Bukan dropdown TERKUNCI — user boleh taip terus nama lain (cth ibu bapa/PIBG yg
+        // bukan guru), senarai ni cuma bantu carian pantas utk kes biasa (guru sekolah).
+        function filterTeacherSuggestions(query) {
+            const box = document.getElementById('teacher-suggestions');
+            if (!box) return;
+            const list = (state.initData && state.initData.teachers) || [];
+            if (!list.length) { box.classList.add('hidden'); return; }
+            const q = String(query || '').trim().toLowerCase();
+            const matches = (q ? list.filter(n => n.toLowerCase().includes(q)) : list).slice(0, 30);
+            box.innerHTML = matches.length
+                ? matches.map(n => `<button type="button" onmousedown="selectTeacherSuggestion('${escapeAttr(n)}')" class="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 text-slate-700 truncate">${escapeHtml(n)}</button>`).join('')
+                : '<p class="text-xs text-slate-400 px-3 py-2">Tiada nama sepadan dlm senarai guru — boleh taip terus.</p>';
+            box.classList.remove('hidden');
+        }
+        function selectTeacherSuggestion(name) {
+            document.getElementById('final-applicantName').value = name;
+            hideTeacherSuggestions();
+        }
+        function hideTeacherSuggestions() {
+            const box = document.getElementById('teacher-suggestions');
+            if (box) box.classList.add('hidden');
+        }
+
+        // --- Galeri gambar bilik (popup + swipe, dipakai di Home & langkah Pilih Fasiliti) ---
+        function openRoomGallery(roomId) {
+            const room = (state.initData.rooms || []).find(r => r.id === roomId);
+            if (!room) return;
+            galleryState.images = (room.images && room.images.length) ? room.images : [];
+            galleryState.index = 0;
+            document.getElementById('gallery-room-name').textContent = room.name || '';
+            renderGalleryTrack();
+            document.getElementById('gallery-modal').classList.remove('hidden');
+        }
+        function closeRoomGallery() { document.getElementById('gallery-modal').classList.add('hidden'); }
+        function renderGalleryTrack() {
+            const track = document.getElementById('gallery-track');
+            const dots = document.getElementById('gallery-dots');
+            const prevBtn = document.getElementById('gallery-prev');
+            const nextBtn = document.getElementById('gallery-next');
+            if (!galleryState.images.length) {
+                track.innerHTML = `<div class="w-full h-full flex flex-col items-center justify-center text-slate-300 shrink-0"><i class="ph ph-image text-4xl mb-2"></i><p class="text-xs text-slate-400">Tiada gambar lagi</p></div>`;
+                dots.innerHTML = '';
+                prevBtn.classList.add('hidden');
+                nextBtn.classList.add('hidden');
+                return;
+            }
+            track.innerHTML = galleryState.images.map(id => `<img src="${escapeAttr(resolveImageUrl(id))}" class="w-full h-full object-cover shrink-0" style="width:100%">`).join('');
+            track.style.transform = `translateX(-${galleryState.index * 100}%)`;
+            dots.innerHTML = galleryState.images.map((_, i) => `<span class="w-1.5 h-1.5 rounded-full ${i === galleryState.index ? 'bg-blue-600' : 'bg-slate-300'}"></span>`).join('');
+            const multi = galleryState.images.length > 1;
+            prevBtn.classList.toggle('hidden', !multi);
+            nextBtn.classList.toggle('hidden', !multi);
+        }
+        function galleryStep(dir) {
+            if (!galleryState.images.length) return;
+            galleryState.index = (galleryState.index + dir + galleryState.images.length) % galleryState.images.length;
+            renderGalleryTrack();
+        }
+        function setupGallerySwipe() {
+            const wrap = document.getElementById('gallery-track-wrap');
+            let startX = 0, deltaX = 0, dragging = false;
+            wrap.addEventListener('touchstart', e => { dragging = true; startX = e.touches[0].clientX; deltaX = 0; }, { passive: true });
+            wrap.addEventListener('touchmove', e => { if (!dragging) return; deltaX = e.touches[0].clientX - startX; }, { passive: true });
+            wrap.addEventListener('touchend', () => {
+                if (!dragging) return; dragging = false;
+                if (deltaX > 40) galleryStep(-1); else if (deltaX < -40) galleryStep(1);
+            });
+        }
+
+        // --- Session ---
+        function saveSession(token, user) {
+            localStorage.setItem('sfs_token', token);
+            localStorage.setItem('sfs_user', JSON.stringify(user));
+            state.currentUser = user;
+        }
+        function clearSession() {
+            localStorage.removeItem('sfs_token');
+            localStorage.removeItem('sfs_user');
+            state.currentUser = null;
+        }
+        function loadSession() {
+            const token = localStorage.getItem('sfs_token');
+            const userJson = localStorage.getItem('sfs_user');
+            if (token && userJson) {
+                try { state.currentUser = JSON.parse(userJson); } catch (e) { clearSession(); }
+            }
+        }
+
+        // --- Bootstrap ---
+        async function loadInitData() {
+            const res = await apiCall('init', {}, false);
+            state.initData = res.ok ? res.data : { rooms: [], settings: {}, timeslotsNormal: [], timeslotsFriday: [], blockedDates: [], todayCount: 0, todayUsage: [], needsSetup: false };
+            if (!res.ok) console.error('Gagal muatkan data awal:', res.error);
+        }
+        function applySettingsToDom() {
+            const s = state.initData.settings || {};
+            document.getElementById('hero-title').textContent = s.heroTitle || 'Selamat Datang,';
+            document.getElementById('hero-subtitle').textContent = s.heroSubtitle || 'Sistem Tempahan Fasiliti Bersepadu';
+            const heroUrl = resolveImageUrl(s.heroImage);
+            document.getElementById('hero-bg').style.backgroundImage = heroUrl ? `url('${heroUrl}')` : 'none';
+            document.getElementById('ticker-text').textContent = s.tickerMessage || 'Tiada pengumuman buat masa ini.';
+            document.getElementById('hero-today-count').textContent = state.initData.todayCount != null ? state.initData.todayCount : '-';
+            document.title = (s.schoolName ? s.schoolName + ' — ' : '') + 'Sistem Tempahan Fasiliti Sekolah';
+
+            const footerEl = document.getElementById('app-footer-text');
+            if (footerEl) footerEl.textContent = s.footerText || ('Copyright © ' + (s.schoolName || 'Sekolah') + ' ' + new Date().getFullYear());
+
+            // Logo sekolah penjuru kiri-atas Home (v2.2) — fallback ikon kilat generik kalau xde logo lagi.
+            const logoWrap = document.getElementById('hero-logo-wrap');
+            if (logoWrap) {
+                const logoUrl = resolveImageUrl(s.schoolLogo);
+                logoWrap.innerHTML = logoUrl
+                    ? `<img src="${escapeAttr(logoUrl)}" alt="Logo" class="w-full h-full object-cover" onerror="this.parentElement.innerHTML='&lt;i class=&quot;ph-fill ph-lightning text-xl&quot;&gt;&lt;/i&gt;'">`
+                    : `<i class="ph-fill ph-lightning text-xl"></i>`;
+            }
+
+            applyBrandingAssets(s);
+        }
+        // PWA/branding: favicon, apple-touch-icon & manifest.json dijana SEMULA client-side
+        // (Blob URL) drpd Settings semasa — supaya bila admin tukar logo/nama sekolah, ikon
+        // & manifest terus ikut, tanpa perlu redeploy fail manifest statik.
+        function applyBrandingAssets(s) {
+            const logoUrl = resolveImageUrl(s.schoolLogo);
+            if (logoUrl) {
+                const favicon = document.getElementById('favicon-link');
+                const appleIcon = document.getElementById('apple-touch-icon-link');
+                if (favicon) favicon.href = logoUrl;
+                if (appleIcon) appleIcon.href = logoUrl;
+            }
+            try {
+                const manifest = {
+                    name: (s.schoolName || 'Sistem Tempahan Fasiliti') + ' — Tempahan Fasiliti',
+                    short_name: s.schoolName || 'Tempahan Fasiliti',
+                    start_url: '.',
+                    display: 'standalone',
+                    background_color: '#ffffff',
+                    theme_color: '#1e3a8a',
+                    icons: logoUrl ? [
+                        { src: logoUrl, sizes: '192x192', type: 'image/png' },
+                        { src: logoUrl, sizes: '512x512', type: 'image/png' }
+                    ] : []
+                };
+                const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const link = document.getElementById('manifest-link');
+                if (link) {
+                    if (link.dataset.blobUrl) URL.revokeObjectURL(link.dataset.blobUrl);
+                    link.href = url;
+                    link.dataset.blobUrl = url;
+                }
+            } catch (e) { /* Blob URL manifest bukan kritikal — senyap kalau browser tak sokong */ }
+        }
+        async function refreshInitData() {
+            await loadInitData();
+            applySettingsToDom();
+            renderHomeRooms();
+        }
+        function updateNavForAuthState() {
+            const adminNav = document.getElementById('nav-admin');
+            if (state.currentUser && state.currentUser.role === 'admin') {
+                adminNav.classList.remove('hidden');
+                adminNav.classList.add('flex');
+            } else {
+                adminNav.classList.add('hidden');
+                adminNav.classList.remove('flex');
+            }
+        }
+
+        // --- Navigation ---
+        // v2.1: 'auth' (Log Masuk Admin) sengaja TIADA dlm NAV_GROUP — dicapai via link kat
+        // footer, bukan nav bar utama, jadi takde butang nav patut "highlight" bila di situ.
+        // 'account' (nav-account) kini Semak Status — public, tak redirect ke 'auth' lagi.
+        const NAV_GROUP = { home: 'home', booking: 'booking', account: 'account', admin: 'admin' };
+
+        function navigate(view) {
+            if (view === 'admin' && !(state.currentUser && state.currentUser.role === 'admin')) view = 'home';
+
+            ['home', 'booking', 'auth', 'account', 'admin'].forEach(v => document.getElementById(`view-${v}`).classList.add('hidden'));
+            document.getElementById(`view-${view}`).classList.remove('hidden');
+
+            const activeNav = NAV_GROUP[view];
+            ['home', 'booking', 'account', 'admin'].forEach(n => {
+                const btn = document.getElementById(`nav-${n}`);
+                const iconContainer = document.getElementById(`nav-icon-${n}`);
+                const icon = iconContainer.querySelector('i');
+                if (n === activeNav) {
+                    btn.classList.remove('text-slate-400'); btn.classList.add('text-blue-600');
+                    iconContainer.classList.remove('bg-transparent'); iconContainer.classList.add('bg-blue-50');
+                    icon.classList.remove('ph'); icon.classList.add('ph-fill');
+                } else {
+                    btn.classList.remove('text-blue-600'); btn.classList.add('text-slate-400');
+                    iconContainer.classList.remove('bg-blue-50'); iconContainer.classList.add('bg-transparent');
+                    icon.classList.remove('ph-fill'); icon.classList.add('ph');
+                }
+            });
+
+            state.currentView = view;
+            // v2.3: bila buka skrin "Log Masuk Admin" tapi sheet Users MASIH kosong (tiada
+            // admin lagi), papar Setup Wizard terus instead of borang login yang tak berguna
+            // (memang tiada akaun pun utk login) — lihat needsSetup dlm apiInit_ (Code.gs).
+            if (view === 'auth') setAuthMode(state.initData.needsSetup ? 'setup' : 'login');
+            if (view === 'booking' && state.bookingStep === 1) renderCalendar();
+            if (view === 'account') resetStatusCheckView();
+            if (view === 'admin') loadAdminTab(state.adminTab);
+            document.getElementById('main-content').scrollTop = 0;
+        }
+
+        function resetApp() {
+            state.bookingStep = 1;
+            state.selectedDate = null;
+            state.selectedDateStr = null;
+            state.selectedRoom = null;
+            state.selectedTimeSlots = [];
+            state.timeRangeAnchor = null;
+            updateBookingUI();
+            navigate('home');
+        }
+
+        // --- Calendar ---
+        function isDateGloballyBlocked(dateObj) {
+            const dateStr = fmtDateStr(dateObj);
+            return (state.initData.blockedDates || []).some(b => b.roomId === 'ALL' && dateStr >= b.startDate && dateStr <= b.endDate);
+        }
+        function showBlockedDateNotice(dateStr) {
+            const entries = (state.initData.blockedDates || []).filter(b => b.roomId === 'ALL' && dateStr >= b.startDate && dateStr <= b.endDate);
+            const reason = entries.length ? (entries[0].reason || 'Tiada sebab dinyatakan oleh admin.') : 'Tarikh ini tidak dibuka untuk tempahan.';
+            showToast('Tarikh Disekat', reason, 'warning');
+        }
+
+        function renderCalendar() {
+            const grid = document.getElementById('calendar-grid');
+            const monthYearText = document.getElementById('calendar-month-year');
+
+            monthYearText.innerText = `${MONTHS[state.currentMonth]} ${state.currentYear}`;
+            grid.innerHTML = '';
+
+            const firstDay = new Date(state.currentYear, state.currentMonth, 1).getDay();
+            const daysInMonth = new Date(state.currentYear, state.currentMonth + 1, 0).getDate();
+            const today = new Date();
+
+            for (let i = 0; i < firstDay; i++) grid.innerHTML += `<div></div>`;
+
+            for (let i = 1; i <= daysInMonth; i++) {
+                const dateObj = new Date(state.currentYear, state.currentMonth, i);
+                const dateStr = fmtDateStr(dateObj);
+                const isPast = dateObj < new Date(today.getFullYear(), today.getMonth(), today.getDate());
+                const isToday = dateObj.getTime() === new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+                const isFriday = dateObj.getDay() === 5;
+                const isBlocked = !isPast && isDateGloballyBlocked(dateObj);
+
+                let btnClass = "w-full aspect-square rounded-xl flex items-center justify-center text-sm font-medium transition-all ";
+
+                if (isPast) {
+                    btnClass += "text-slate-300 cursor-not-allowed";
+                    grid.innerHTML += `<div class="${btnClass}">${i}</div>`;
+                } else if (isBlocked) {
+                    btnClass += "text-red-400 bg-red-50 line-through";
+                    grid.innerHTML += `<button onclick="showBlockedDateNotice('${dateStr}')" class="${btnClass}" title="Tarikh off — klik utk sebab">${i}</button>`;
+                } else {
+                    btnClass += isFriday ? "text-blue-600 bg-blue-50 hover:bg-blue-600 hover:text-white " : "text-slate-700 bg-ice-50 hover:bg-blue-600 hover:text-white ";
+                    if (isToday) btnClass += " ring-2 ring-blue-500 ";
+                    grid.innerHTML += `<button onclick="selectDate(${i})" class="${btnClass}">${i}</button>`;
+                }
+            }
+        }
+
+        function changeMonth(dir) {
+            state.currentMonth += dir;
+            if (state.currentMonth > 11) { state.currentMonth = 0; state.currentYear++; }
+            else if (state.currentMonth < 0) { state.currentMonth = 11; state.currentYear--; }
+            renderCalendar();
+        }
+
+        function selectDate(day) {
+            state.selectedDate = new Date(state.currentYear, state.currentMonth, day);
+            state.selectedDateStr = fmtDateStr(state.selectedDate);
+
+            const dateStr = `${day} ${MONTHS[state.currentMonth]} ${state.currentYear}`;
+            document.getElementById('display-selected-date').innerText = dateStr;
+            document.getElementById('display-selected-date-2').innerText = `${day} ${MONTHS[state.currentMonth]}`;
+
+            goToStep(2);
+            renderTimeRangeSlots();
+        }
+
+        // --- Rooms (Home & senarai bilik available) ---
+        // Pilih Fasiliti (Langkah 3 booking) — v3.1: reskin jadi list-item mendatar padat
+        // (thumbnail kecil + badge kategori + nama + kapasiti + kemudahan + butang), ikut
+        // rujukan admin. #room-list-container anak terus KEKAL 1 <div> per bilik.
+        function renderRoomCardsInto(container, rooms, mode) {
+            if (!rooms.length) {
+                container.innerHTML = '<div class="bg-white rounded-2xl border border-slate-200 p-8 text-center"><p class="text-sm text-slate-400">Belum ada bilik tersedia. Hubungi admin.</p></div>';
+                return;
+            }
+            container.innerHTML = rooms.map(room => {
+                const badge = categoryBadgeStyle(room.type);
+                const feats = featuresArray(room).map(f => `<span class="bg-slate-100 text-slate-600 text-[10px] px-2 py-0.5 rounded-md font-semibold">${escapeHtml(f)}</span>`).join('');
+                const unavailable = mode === 'availability' && room.available === false;
+                let actionHtml;
+                if (mode === 'availability') {
+                    actionHtml = room.available
+                        ? `<button onclick="selectRoom('${room.id}')" class="bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold px-4 py-2.5 rounded-full transition-all active:scale-95 whitespace-nowrap">Pilih Fasiliti</button>`
+                        : `<div class="text-slate-400 text-[10px] font-bold text-center px-3 py-2.5 rounded-full bg-slate-100 flex items-center gap-1 whitespace-nowrap"><i class="ph ph-x-circle"></i> Penuh</div>`;
+                } else {
+                    actionHtml = `<button onclick="navigate('booking')" class="bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold px-4 py-2.5 rounded-full transition-all active:scale-95 whitespace-nowrap">Tempah</button>`;
+                }
+                const reasonLine = unavailable
+                    ? `<p class="text-[11px] text-red-400 font-medium mt-1 truncate">${escapeHtml(room.unavailableReason || 'Tidak available')}</p>`
+                    : '';
+                return `
+                    <div class="bg-white rounded-2xl p-3 border border-slate-200 shadow-sm flex items-center gap-3 ${unavailable ? 'opacity-60' : ''}">
+                        <div class="w-16 h-16 rounded-xl overflow-hidden relative cursor-pointer shrink-0" onclick="openRoomGallery('${room.id}')">
+                            ${roomImageHtml(room)}
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <span class="${badge.bg} ${badge.text} text-[9px] font-bold px-2 py-0.5 rounded uppercase tracking-wide inline-block mb-1">${escapeHtml(room.type || 'Fasiliti')}</span>
+                            <h3 class="font-bold text-slate-800 text-base leading-tight truncate">${escapeHtml(room.name)}</h3>
+                            <div class="flex items-center gap-1 text-xs text-slate-500 mt-0.5">
+                                <i class="ph ph-users"></i> Kapasiti: ${escapeHtml(String(room.capacity || '-'))} Org
+                            </div>
+                            ${feats ? `<div class="flex gap-1 flex-wrap mt-1.5">${feats}</div>` : ''}
+                            ${reasonLine}
+                        </div>
+                        <div class="shrink-0">${actionHtml}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Facility Carousel (Home) — v3.1: satu slide penuh, auto-scroll + swipe + dots.
+        // #home-rooms-container ialah TRACK (flex) — anak terus mesti 1 <div class="...flex-shrink-0">
+        // per bilik (Playwright kira `#home-rooms-container > div` === bilangan bilik demo).
+        function renderHomeRooms() {
+            const container = document.getElementById('home-rooms-container');
+            const rooms = (state.initData && state.initData.rooms) || [];
+            state.homeCarouselRooms = rooms;
+            state.homeCarouselIndex = 0;
+            if (state.homeCarouselTimer) { clearInterval(state.homeCarouselTimer); state.homeCarouselTimer = null; }
+
+            if (!rooms.length) {
+                container.innerHTML = '<p class="text-sm text-slate-400 px-6 py-10">Belum ada bilik didaftarkan.</p>';
+                document.getElementById('home-carousel-dots').innerHTML = '';
+                return;
+            }
+
+            container.innerHTML = rooms.map((room, idx) => {
+                const badge = categoryBadgeStyle(room.type);
+                const imgCountBadge = (room.images && room.images.length > 1)
+                    ? `<div class="absolute top-3 right-3 z-10 bg-black/50 text-white text-[10px] font-bold px-2 py-1 rounded-lg flex items-center gap-1"><i class="ph ph-images"></i> ${room.images.length}</div>`
+                    : '';
+                const feats = featuresArray(room).slice(0, 2).join(' · ');
+                const captionBits = [`Kapasiti ${room.capacity || '-'} org`, feats].filter(Boolean).join(' · ');
+                return `
+                    <div class="w-full h-full flex-shrink-0 relative">
+                        <div class="w-full h-full cursor-pointer" onclick="openRoomGallery('${room.id}')">
+                            ${roomImageHtml(room)}
+                        </div>
+                        <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent pointer-events-none"></div>
+                        ${imgCountBadge}
+                        <div class="absolute top-3 left-3">
+                            <span class="${badge.bg} ${badge.text} text-[10px] font-bold px-2.5 py-1 rounded-md uppercase tracking-wide shadow-sm">${escapeHtml(room.type || 'Fasiliti')}</span>
+                        </div>
+                        <div class="absolute bottom-0 left-0 w-full p-5 text-white pointer-events-none">
+                            <h3 class="text-xl font-bold mb-1 leading-tight">${escapeHtml(room.name)}</h3>
+                            <p class="text-xs text-gray-200">${escapeHtml(captionBits)}</p>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            renderHomeCarouselDots();
+            updateHomeCarouselTransform(false);
+            initHomeCarouselInteractions();
+            if (rooms.length > 1) {
+                state.homeCarouselTimer = setInterval(homeCarouselNext, 4000);
+            }
+        }
+
+        function renderHomeCarouselDots() {
+            const dotsWrap = document.getElementById('home-carousel-dots');
+            const rooms = state.homeCarouselRooms;
+            if (rooms.length < 2) { dotsWrap.innerHTML = ''; return; }
+            dotsWrap.innerHTML = rooms.map((_, idx) => {
+                const active = idx === state.homeCarouselIndex;
+                return `<button onclick="goToHomeSlide(${idx})" aria-label="Fasiliti ${idx + 1}" class="h-2 rounded-full transition-all duration-300 ${active ? 'w-6 bg-white' : 'w-2.5 bg-white/50 hover:bg-white/75'}"></button>`;
+            }).join('');
+        }
+
+        function updateHomeCarouselTransform(animate) {
+            const track = document.getElementById('home-rooms-container');
+            if (!track) return;
+            track.style.transitionDuration = animate === false ? '0ms' : '500ms';
+            track.style.transform = `translateX(-${state.homeCarouselIndex * 100}%)`;
+        }
+
+        function goToHomeSlide(idx) {
+            const n = state.homeCarouselRooms.length;
+            if (!n) return;
+            state.homeCarouselIndex = ((idx % n) + n) % n;
+            updateHomeCarouselTransform(true);
+            renderHomeCarouselDots();
+        }
+        function homeCarouselNext() { goToHomeSlide(state.homeCarouselIndex + 1); }
+        function homeCarouselPrev() { goToHomeSlide(state.homeCarouselIndex - 1); }
+
+        // Leret (touch swipe) — ambang 40px, sama macam spec. Timer auto-scroll dijeda semasa
+        // sentuh/hover supaya tak "berlawan" dgn tindakan user, sambung semula lepas selesai.
+        function initHomeCarouselInteractions() {
+            const wrap = document.getElementById('facility-carousel');
+            if (!wrap || wrap.dataset.boundInteractions) return;
+            wrap.dataset.boundInteractions = '1';
+
+            const pause = () => { if (state.homeCarouselTimer) { clearInterval(state.homeCarouselTimer); state.homeCarouselTimer = null; } };
+            const resume = () => {
+                if (!state.homeCarouselTimer && state.homeCarouselRooms.length > 1) {
+                    state.homeCarouselTimer = setInterval(homeCarouselNext, 4000);
+                }
+            };
+
+            let touchStartX = null;
+            wrap.addEventListener('touchstart', (e) => {
+                touchStartX = e.changedTouches[0].clientX;
+                pause();
+            }, { passive: true });
+            wrap.addEventListener('touchend', (e) => {
+                if (touchStartX === null) return;
+                const dx = e.changedTouches[0].clientX - touchStartX;
+                if (Math.abs(dx) > 40) { dx < 0 ? homeCarouselNext() : homeCarouselPrev(); }
+                touchStartX = null;
+                resume();
+            }, { passive: true });
+
+            wrap.addEventListener('mouseenter', pause);
+            wrap.addEventListener('mouseleave', resume);
+        }
+
+        // --- Time range selection (Langkah 2) ---
+        function currentDaySlots() {
+            const isFriday = state.selectedDate.getDay() === 5;
+            return (isFriday ? state.initData.timeslotsFriday : state.initData.timeslotsNormal) || [];
+        }
+
+        function renderTimeRangeSlots() {
+            state.selectedTimeSlots = [];
+            state.timeRangeAnchor = null;
+            renderTimeSlotButtons();
+        }
+
+        function renderTimeSlotButtons() {
+            const container = document.getElementById('time-slots-container');
+            const baseSlots = currentDaySlots();
+            if (!baseSlots.length) {
+                container.innerHTML = '<p class="col-span-2 text-center text-sm text-slate-400 py-8">Jadual slot masa belum disediakan.</p>';
+                document.getElementById('time-selection-footer').innerHTML = '';
+                return;
+            }
+            container.innerHTML = baseSlots.map(slot => {
+                if (slot.disabled) {
+                    return `<div class="col-span-2 py-2 px-3 bg-slate-100 border border-slate-200 rounded-xl text-slate-400 font-medium text-xs text-center flex items-center justify-center gap-2"><i class="ph ph-prohibit"></i> ${escapeHtml(slot.label)}</div>`;
+                }
+                const selected = state.selectedTimeSlots.indexOf(slot.label) !== -1;
+                const cls = selected
+                    ? 'py-3 px-2 bg-blue-600 border border-blue-600 rounded-xl text-white font-bold text-sm text-center shadow-soft transition-all active:scale-95'
+                    : 'py-3 px-2 bg-white border border-ice-200 rounded-xl text-slate-700 font-bold text-sm hover:border-blue-600 hover:bg-blue-50 hover:text-blue-700 transition-all shadow-soft active:scale-95';
+                return `<button onclick="toggleTimeSlot('${escapeAttr(slot.label)}')" class="${cls}">${escapeHtml(slot.label)}</button>`;
+            }).join('');
+            renderTimeSelectionFooter();
+        }
+
+        function renderTimeSelectionFooter() {
+            const footer = document.getElementById('time-selection-footer');
+            const hasSelection = state.selectedTimeSlots.length > 0;
+            const summary = hasSelection ? formatSlotRangeClient(state.selectedTimeSlots) : 'Belum pilih slot masa';
+            const continueBtnCls = hasSelection
+                ? 'px-4 py-2.5 rounded-xl font-bold text-sm bg-blue-600 text-white hover:bg-blue-700'
+                : 'px-4 py-2.5 rounded-xl font-bold text-sm bg-slate-100 text-slate-400 cursor-not-allowed';
+            footer.innerHTML = `
+                <div class="flex items-center justify-between gap-3 bg-white border border-ice-200 rounded-2xl p-3 shadow-soft">
+                    <div class="min-w-0">
+                        <p class="text-[11px] text-slate-400">Masa dipilih</p>
+                        <p class="font-bold text-slate-800 text-sm truncate">${escapeHtml(summary)}</p>
+                    </div>
+                    <div class="flex gap-2 shrink-0">
+                        ${hasSelection ? `<button onclick="clearTimeSelection()" class="p-2.5 rounded-xl bg-slate-100 text-slate-500"><i class="ph ph-x"></i></button>` : ''}
+                        <button onclick="confirmTimeSelection()" ${hasSelection ? '' : 'disabled'} class="${continueBtnCls}">Seterusnya</button>
+                    </div>
+                </div>`;
+        }
+
+        // Klik slot MULA lepas tu slot AKHIR -> pilih semua slot boleh-tempah di antaranya
+        // (skip automatik slot 'disabled' spt Rehat/Solat — kekal berturutan secara logik).
+        function toggleTimeSlot(label) {
+            const bookable = currentDaySlots().filter(s => !s.disabled);
+
+            if (!state.timeRangeAnchor) {
+                state.timeRangeAnchor = label;
+                state.selectedTimeSlots = [label];
+            } else if (state.selectedTimeSlots.length === 1 && state.selectedTimeSlots[0] === label) {
+                state.timeRangeAnchor = null;
+                state.selectedTimeSlots = [];
+            } else {
+                const anchorIdx = bookable.findIndex(s => s.label === state.timeRangeAnchor);
+                const clickIdx = bookable.findIndex(s => s.label === label);
+                if (anchorIdx === -1 || clickIdx === -1) {
+                    state.timeRangeAnchor = label;
+                    state.selectedTimeSlots = [label];
+                } else {
+                    const lo = Math.min(anchorIdx, clickIdx), hi = Math.max(anchorIdx, clickIdx);
+                    state.selectedTimeSlots = bookable.slice(lo, hi + 1).map(s => s.label);
+                }
+            }
+            renderTimeSlotButtons();
+        }
+
+        function clearTimeSelection() {
+            state.timeRangeAnchor = null;
+            state.selectedTimeSlots = [];
+            renderTimeSlotButtons();
+        }
+
+        function confirmTimeSelection() {
+            if (!state.selectedTimeSlots.length) return;
+            document.getElementById('display-selected-time-summary').innerText = formatSlotRangeClient(state.selectedTimeSlots);
+            goToStep(3);
+            renderAvailableRooms();
+        }
+
+        // --- Room availability (Langkah 3 — tarikh+masa dah dipilih) ---
+        async function renderAvailableRooms() {
+            const container = document.getElementById('room-list-container');
+            container.innerHTML = loaderHtml({ label: 'Menyemak bilik available...' });
+            const res = await apiCall('availableRooms', { date: state.selectedDateStr, timeSlots: state.selectedTimeSlots }, false);
+            if (!res.ok) {
+                container.innerHTML = `<p class="text-sm text-red-500 text-center py-8">${escapeHtml(res.error || 'Ralat menyemak bilik.')}</p>`;
+                return;
+            }
+            renderRoomCardsInto(container, res.data || [], 'availability');
+        }
+
+        // v2.1: pilih bilik terus ke borang permohonan — tiada lagi cabang "kena login dulu"
+        // (booking dah tak wajibkan akaun langsung, lihat NOTA kat apiCreateBooking_).
+        function selectRoom(roomId) {
+            const room = (state.initData.rooms || []).find(r => r.id === roomId);
+            if (!room) return;
+            state.selectedRoom = room;
+            prepareFinalForm();
+            goToStep(4);
+        }
+
+        // --- Auth (Log Masuk Admin sahaja — v2.1: tiada lagi register/pendaftaran awam) ---
+        function setAuthMode(mode) {
+            const forms = { setup: 'setup-form', login: 'login-form', 'forgot-request': 'forgot-request-form', 'forgot-confirm': 'forgot-confirm-form' };
+            Object.values(forms).forEach(id => document.getElementById(id).classList.add('hidden'));
+            document.getElementById(forms[mode]).classList.remove('hidden');
+            const titles = { setup: 'Setup Akaun Admin Pertama', login: 'Log Masuk Admin', 'forgot-request': 'Lupa Password', 'forgot-confirm': 'Masukkan Kod Reset' };
+            document.getElementById('auth-title').textContent = titles[mode];
+        }
+
+        // Login kini SEMATA-MATA utk admin/staff (booking tak lalui sini langsung), jadi lepas
+        // login berjaya terus bawa ke Admin Panel — bukan "sambung balik booking" macam dulu.
+        function afterAuthSuccess() {
+            updateNavForAuthState();
+            navigate(state.currentUser && state.currentUser.role === 'admin' ? 'admin' : 'home');
+        }
+
+        async function handleLogin(e) {
+            e.preventDefault();
+            clearFormError('login-error');
+            document.getElementById('login-error').className = 'hidden text-xs rounded-lg px-3 py-2';
+            const form = e.target;
+            const res = await apiCall('login', { email: form.elements['email'].value, password: form.elements['password'].value }, false);
+            if (!res.ok) {
+                document.getElementById('login-error').className = 'text-red-600 text-xs bg-red-50 border border-red-100 rounded-lg px-3 py-2';
+                showFormError('login-error', res.error);
+                return;
+            }
+            saveSession(res.data.token, { email: res.data.email, name: res.data.name, role: res.data.role, department: res.data.department || '', phone: res.data.phone || '' });
+            afterAuthSuccess();
+        }
+
+        // v2.3: Setup Wizard admin pertama — hanya boleh berjaya sekali (backend tolak
+        // lepas sheet Users ada sekurang-kurangnya 1 baris, lihat apiSetupFirstAdmin_ dlm
+        // Auth.gs). Lepas berjaya, backend terus pulangkan token macam login biasa —
+        // straight masuk Admin Panel, tak payah log masuk semula.
+        async function handleSetupFirstAdmin(e) {
+            e.preventDefault();
+            clearFormError('setup-error');
+            const form = e.target;
+            const password = form.elements['password'].value;
+            const confirmPassword = form.elements['confirmPassword'].value;
+            if (password !== confirmPassword) { showFormError('setup-error', 'Password & sahkan password tidak sepadan.'); return; }
+
+            const res = await apiCall('setupFirstAdmin', {
+                name: form.elements['name'].value, email: form.elements['email'].value, password: password
+            }, false);
+            if (!res.ok) {
+                showFormError('setup-error', res.error);
+                // Kalau server dah ada admin (race condition / dah setup di tab/peranti lain),
+                // "downgrade" senyap ke borang login biasa supaya user boleh terus log masuk.
+                if (res.code === 'SETUP_ALREADY_DONE') {
+                    state.initData.needsSetup = false;
+                    setTimeout(() => setAuthMode('login'), 1500);
+                }
+                return;
+            }
+            state.initData.needsSetup = false;
+            saveSession(res.data.token, { email: res.data.email, name: res.data.name, role: res.data.role, department: res.data.department || '', phone: res.data.phone || '' });
+            showToast('Berjaya', 'Akaun admin dicipta. Selamat datang!', 'success');
+            afterAuthSuccess();
+        }
+
+        async function handleForgotRequest(e) {
+            e.preventDefault();
+            clearFormError('forgot-request-error');
+            const form = e.target;
+            forgotEmail = form.elements['email'].value;
+            const res = await apiCall('requestPasswordReset', { email: forgotEmail }, false);
+            if (!res.ok) { showFormError('forgot-request-error', res.error); return; }
+            setAuthMode('forgot-confirm');
+        }
+
+        async function handleForgotConfirm(e) {
+            e.preventDefault();
+            clearFormError('forgot-confirm-error');
+            const form = e.target;
+            const res = await apiCall('confirmPasswordReset', { email: forgotEmail, resetCode: form.elements['resetCode'].value, newPassword: form.elements['newPassword'].value }, false);
+            if (!res.ok) { showFormError('forgot-confirm-error', res.error); return; }
+            setAuthMode('login');
+            const el = document.getElementById('login-error');
+            el.className = 'text-emerald-600 text-xs bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2';
+            el.textContent = 'Password berjaya ditetapkan semula. Sila log masuk.';
+            el.classList.remove('hidden');
+        }
+
+        function handleLogout() {
+            clearSession();
+            updateNavForAuthState();
+            navigate('home');
+        }
+
+        // --- Booking: final form & submit ---
+        // v2.1: tiada akaun lagi, jadi auto-fill guna "ingatan" browser sendiri (localStorage) —
+        // bukan akaun. Kali pertama guna, borang kosong; lepas submit sekali, browser/device
+        // yang SAMA akan auto-terisi utk tempahan seterusnya (senang utk yang selalu book).
+        function getSavedApplicantInfo() {
+            try { return JSON.parse(localStorage.getItem('sfs_applicant_info') || '{}'); } catch (e) { return {}; }
+        }
+        function saveApplicantInfo(info) {
+            try { localStorage.setItem('sfs_applicant_info', JSON.stringify(info)); } catch (e) { /* senyap kalau localStorage disekat */ }
+        }
+
+        function prepareFinalForm() {
+            const saved = getSavedApplicantInfo();
+            document.getElementById('final-applicantName').value = saved.applicantName || '';
+            document.getElementById('final-department').value = saved.department || '';
+            document.getElementById('final-phone').value = saved.phone || '';
+            document.getElementById('final-email').value = saved.email || '';
+            // Tujuan SENGAJA tak auto-isi (lihat nota di handleFinalSubmit) — tapi kena clear
+            // eksplisit di sini jugak, sbb <form> yg sama dipakai balik utk tempahan seterusnya
+            // dlm 1 sesi SPA (tiada reload page). Tanpa baris ni, teks tujuan tempahan LAMA akan
+            // tertinggal senyap dlm medan ni bila user buat tempahan kedua — risiko submit silap.
+            const purposeField = document.querySelector('#booking-form [name="purpose"]');
+            if (purposeField) purposeField.value = '';
+
+            const day = state.selectedDate.getDate();
+            const month = MONTHS[state.selectedDate.getMonth()];
+            const year = state.selectedDate.getFullYear();
+
+            document.getElementById('summary-room').innerText = state.selectedRoom.name;
+            document.getElementById('summary-date').innerText = `${day} ${month} ${year}`;
+            document.getElementById('summary-time').innerText = formatSlotRangeClient(state.selectedTimeSlots);
+        }
+
+        async function handleFinalSubmit(e) {
+            e.preventDefault();
+            clearFormError('final-form-error');
+            const form = e.target;
+            const btn = form.querySelector('button[type="submit"]');
+            const originalHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = `<span class="spark-loader spark-sm" style="margin:0"><span class="spark-face" style="background:transparent;box-shadow:none"></span><span class="spark-ring"></span></span> Menghantar...`;
+
+            // Identiti (nama/jabatan/emel/phone) diingat utk lain kali — "purpose" SENGAJA tidak,
+            // sbb tujuan tempahan biasanya lain setiap kali, tak sesuai auto-isi drpd lawatan lepas.
+            const identityInfo = {
+                applicantName: form.elements['applicantName'].value.trim(),
+                department: form.elements['department'].value.trim(),
+                email: form.elements['email'].value.trim(),
+                phone: form.elements['phone'].value.trim()
+            };
+            const purpose = form.elements['purpose'].value.trim();
+
+            // v2.1: TIADA token — public, lihat NOTA dlm Code.gs/Bookings.gs (apiCreateBooking_).
+            const res = await apiCall('createBooking', Object.assign({
+                roomId: state.selectedRoom.id,
+                date: state.selectedDateStr,
+                timeSlots: state.selectedTimeSlots,
+                purpose: purpose
+            }, identityInfo), false);
+
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+
+            if (!res.ok) {
+                showFormError('final-form-error', res.error || 'Tempahan gagal. Sila cuba lagi.');
+                if (res.code === 'SLOT_TAKEN') {
+                    setTimeout(() => { goToStep(3); renderAvailableRooms(); }, 1800);
+                }
+                return;
+            }
+
+            saveApplicantInfo(identityInfo); // ingat utk tempahan akan datang (device/browser ni sahaja)
+            document.getElementById('ticket-id').innerText = '#' + String(res.data.bookingId).slice(0, 8).toUpperCase();
+            document.getElementById('ticket-room').innerText = state.selectedRoom.name;
+            document.getElementById('ticket-datetime').innerText = `${state.selectedDate.getDate()} ${MONTHS[state.selectedDate.getMonth()]} • ${formatSlotRangeClient(state.selectedTimeSlots)}`;
+            goToStep(5);
+        }
+
+        // --- Step management ---
+        function goToStep(step) {
+            state.bookingStep = step;
+            updateBookingUI();
+            document.getElementById('main-content').scrollTop = 0;
+        }
+
+        // v2.1: 4 langkah bernombor (Tarikh/Masa/Fasiliti/Borang) + 1 skrin Status (tiada
+        // nombor) — langkah "Log Masuk" dah dibuang terus drpd flow booking.
+        function goBackBooking() {
+            if (state.bookingStep > 1 && state.bookingStep < 5) {
+                goToStep(state.bookingStep - 1);
+            }
+        }
+
+        function updateBookingUI() {
+            for (let i = 1; i <= 5; i++) {
+                document.getElementById(`step-${i}`).classList.add('hidden');
+                document.getElementById(`step-${i}`).classList.remove('block');
+            }
+            document.getElementById(`step-${state.bookingStep}`).classList.remove('hidden');
+            document.getElementById(`step-${state.bookingStep}`).classList.add('block');
+
+            const titles = { 1: 'Pilih Tarikh', 2: 'Pilih Masa', 3: 'Pilih Fasiliti', 4: 'Maklumat Permohonan', 5: 'Status' };
+            document.getElementById('booking-title').innerText = titles[state.bookingStep];
+            document.getElementById('booking-subtitle').innerText = state.bookingStep < 5 ? `Langkah ${state.bookingStep} dari 4` : 'Selesai';
+
+            const btnBack = document.getElementById('btn-back');
+            if (state.bookingStep > 1 && state.bookingStep < 5) btnBack.classList.remove('hidden');
+            else btnBack.classList.add('hidden');
+
+            const progressContainer = document.getElementById('booking-progress');
+            if (state.bookingStep < 5) {
+                progressContainer.classList.remove('hidden');
+                progressContainer.classList.add('flex');
+                const bars = progressContainer.children;
+                for (let i = 0; i < 4; i++) {
+                    bars[i].className = i < state.bookingStep ? 'h-1.5 flex-1 rounded-full bg-blue-600 transition-all duration-300' : 'h-1.5 flex-1 rounded-full bg-slate-200 transition-all duration-300';
+                }
+            } else {
+                progressContainer.classList.add('hidden');
+                progressContainer.classList.remove('flex');
+            }
+        }
+
+        // --- Semak Status Tempahan (public — dulu "Account view", v2.1) ---
+        let statusCheckCache = [];
+        let statusCheckIdentifier = '';
+
+        function resetStatusCheckView() {
+            const form = document.getElementById('status-check-form');
+            if (form) form.reset();
+            document.getElementById('status-check-results').innerHTML = '';
+            clearFormError('status-check-error');
+        }
+
+        async function handleCheckStatus(e) {
+            e.preventDefault();
+            clearFormError('status-check-error');
+            const form = e.target;
+            const identifier = form.elements['identifier'].value.trim();
+            const resultsEl = document.getElementById('status-check-results');
+            resultsEl.innerHTML = loaderHtml({ small: true, label: 'Menyemak...' });
+
+            const res = await apiCall('checkBookingStatus', { identifier: identifier }, false);
+            if (!res.ok) {
+                resultsEl.innerHTML = '';
+                showFormError('status-check-error', res.error || 'Gagal menyemak status.');
+                return;
+            }
+            statusCheckCache = res.data || [];
+            statusCheckIdentifier = identifier;
+            renderStatusCheckResults();
+        }
+
+        function renderStatusCheckResults() {
+            const resultsEl = document.getElementById('status-check-results');
+            if (!statusCheckCache.length) {
+                resultsEl.innerHTML = '<p class="text-sm text-slate-400 text-center py-6">Tiada tempahan dijumpai utk emel/no. telefon ni.</p>';
+                return;
+            }
+            resultsEl.innerHTML = statusCheckCache.map(b => {
+                const room = ((state.initData.rooms || []).find(r => r.id === b.roomId) || {}).name || b.roomId;
+                const canCancel = b.status === 'pending' || b.status === 'approved';
+                return `
+                    <div class="bg-white rounded-2xl p-4 border border-ice-200/60 shadow-soft mb-3">
+                        <div class="flex justify-between items-start mb-1 gap-2">
+                            <p class="font-bold text-slate-800 text-sm">${escapeHtml(room)}</p>
+                            ${statusBadge(b.status)}
+                        </div>
+                        <p class="text-xs text-slate-500">${escapeHtml(b.date)} • ${escapeHtml(formatSlotRangeClient(b.timeSlots || []))}</p>
+                        <p class="text-xs text-slate-400 mt-1">${escapeHtml(b.purpose)}</p>
+                        ${canCancel ? `<button onclick="confirmCancelBooking('${escapeAttr(b.id)}')" class="mt-3 w-full text-red-600 font-bold bg-red-50 text-xs py-2 rounded-lg hover:bg-red-100 transition-colors">Batalkan Tempahan</button>` : ''}
+                    </div>`;
+            }).join('');
+        }
+
+        // ID tempahan dijana sistem (bukan free-text pengguna), selamat interpolate terus dlm
+        // onclick — konsisten dgn disiplin keselamatan yg dipakai kat adminRoomsCache dll.
+        function confirmCancelBooking(bookingId) {
+            showConfirmModal('Batalkan Tempahan?', 'Tindakan ni tak boleh diundur. Slot masa akan dibuka semula utk orang lain menempah.', async () => {
+                const res = await apiCall('cancelBooking', { bookingId: bookingId, identifier: statusCheckIdentifier }, false);
+                if (!res.ok) { showToast('Gagal', res.error || 'Tak dapat batalkan tempahan.', 'error'); return; }
+                showToast('Berjaya', 'Tempahan dibatalkan.', 'success');
+                const found = statusCheckCache.find(b => b.id === bookingId);
+                if (found) found.status = 'cancelled';
+                renderStatusCheckResults();
+            });
+        }
+
+        async function handleChangePassword(e) {
+            e.preventDefault();
+            clearFormError('change-password-error');
+            document.getElementById('change-password-success').classList.add('hidden');
+            const form = e.target;
+            const res = await apiCall('changePassword', { oldPassword: form.elements['oldPassword'].value, newPassword: form.elements['newPassword'].value }, true);
+            if (!res.ok) { showFormError('change-password-error', res.error); return; }
+            form.reset();
+            const succ = document.getElementById('change-password-success');
+            succ.textContent = 'Password berjaya dikemaskini.';
+            succ.classList.remove('hidden');
+        }
+
+        // --- Admin panel ---
+        function highlightAdminTab(tab) {
+            document.querySelectorAll('.admin-tab-btn').forEach(btn => {
+                btn.className = btn.dataset.tab === tab
+                    ? 'admin-tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-semibold border border-blue-600 bg-blue-600 text-white shadow-soft-md'
+                    : 'admin-tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-semibold border border-ice-200 bg-white text-slate-600 shadow-soft';
+            });
+        }
+
+        function loadAdminTab(tab) {
+            state.adminTab = tab;
+            highlightAdminTab(tab);
+            document.getElementById('admin-tab-content').innerHTML = loaderHtml({ label: 'Memuatkan...' });
+            if (tab === 'bookings') return renderAdminBookings();
+            if (tab === 'stats') return renderAdminStats();
+            if (tab === 'rooms') return renderAdminRooms();
+            if (tab === 'blocked') return renderAdminBlocked();
+            if (tab === 'timeslots') return renderAdminTimeslots();
+            if (tab === 'teachers') return renderAdminTeachers();
+            if (tab === 'users') return renderAdminUsers();
+            if (tab === 'settings') return renderAdminSettings();
+            if (tab === 'audit') return renderAdminAuditLog();
+        }
+
+        async function renderAdminBookings(filterStatus) {
+            if (filterStatus) state.adminBookingFilter = filterStatus;
+            filterStatus = state.adminBookingFilter || 'pending';
+            const content = document.getElementById('admin-tab-content');
+            const res = await apiCall('adminListBookings', { status: filterStatus === 'all' ? undefined : filterStatus }, true);
+            if (!res.ok) { content.innerHTML = adminErrorBlock(res.error); return; }
+            adminBookingsCache = res.data || [];
+
+            const filterBtns = ['pending', 'approved', 'rejected', 'cancelled', 'all'].map(s =>
+                `<button onclick="renderAdminBookings('${s}')" class="px-3 py-1.5 rounded-full text-xs font-semibold border ${filterStatus === s ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-ice-200'}">${s.toUpperCase()}</button>`
+            ).join('');
+            const exportBtns = `<div class="flex gap-2 mb-4">
+                <button onclick="exportBookingsExcel()" class="flex-1 bg-emerald-50 text-emerald-700 font-bold text-xs py-2.5 rounded-xl flex items-center justify-center gap-1.5 hover:bg-emerald-100 transition-colors"><i class="ph ph-file-xls"></i> Muat Turun Excel</button>
+                <button onclick="exportBookingsPDF()" class="flex-1 bg-red-50 text-red-700 font-bold text-xs py-2.5 rounded-xl flex items-center justify-center gap-1.5 hover:bg-red-100 transition-colors"><i class="ph ph-file-pdf"></i> Muat Turun PDF</button>
+            </div>`;
+
+            if (!res.data.length) {
+                content.innerHTML = `<div class="flex gap-2 mb-4 flex-wrap">${filterBtns}</div><div class="bg-white rounded-2xl border border-ice-200/60 p-8 text-center mb-4"><p class="text-sm text-slate-400">Tiada tempahan.</p></div>${deleteOldBookingsBlockHtml()}`;
+                return;
+            }
+
+            const rows = res.data.map(b => {
+                const room = ((state.initData.rooms || []).find(r => r.id === b.roomId) || {}).name || b.roomId;
+                const actions = b.status === 'pending' ? `
+                    <div class="flex gap-2 mt-3">
+                        <button onclick="adminSetBookingStatus('${b.id}','approved')" class="flex-1 bg-emerald-600 text-white text-xs font-bold py-2 rounded-lg hover:bg-emerald-700">Lulus</button>
+                        <button onclick="adminSetBookingStatus('${b.id}','rejected')" class="flex-1 bg-red-500 text-white text-xs font-bold py-2 rounded-lg hover:bg-red-600">Tolak</button>
+                    </div>` : '';
+                return `
+                    <div class="p-4">
+                        <div class="flex justify-between items-start mb-1 gap-2">
+                            <p class="font-bold text-slate-800 text-sm">${escapeHtml(room)}</p>
+                            ${statusBadge(b.status)}
+                        </div>
+                        <p class="text-xs text-slate-500">${escapeHtml(b.date)} • ${escapeHtml(formatSlotRangeClient(b.timeSlots || []))}</p>
+                        <p class="text-xs text-slate-600 mt-2"><span class="font-semibold">${escapeHtml(b.applicantName)}</span> — ${escapeHtml(b.department)}</p>
+                        <p class="text-xs text-slate-400">${escapeHtml(b.purpose)}</p>
+                        <p class="text-[11px] text-slate-400 mt-1">${escapeHtml(b.email)} • ${escapeHtml(b.phone)}</p>
+                        ${actions}
+                    </div>`;
+            }).join('');
+
+            // v3.0: baris dulu masing2 kad shadow berasingan (dense-list nampak "generik") — kini
+            // SATU kad bercantum + divide-y hairline antara baris (craft guidance utk dense data).
+            content.innerHTML = `<div class="flex gap-2 mb-4 flex-wrap">${filterBtns}</div>${exportBtns}<div class="bg-white rounded-2xl border border-ice-200/60 shadow-soft divide-y divide-ice-100 overflow-hidden mb-4">${rows}</div>${deleteOldBookingsBlockHtml()}`;
+        }
+
+        // --- v2.4: Padam Tempahan Lama (manual, admin taip bilangan bulan + pilih status) ---
+        function deleteOldBookingsBlockHtml() {
+            return `
+                <button onclick="document.getElementById('delete-old-bookings-form').classList.toggle('hidden')" class="w-full border-2 border-dashed border-red-200 text-red-500 font-semibold text-sm py-3 rounded-2xl hover:border-red-400 hover:bg-red-50 transition-all">
+                    <i class="ph ph-trash"></i> Padam Tempahan Lama
+                </button>
+                <form id="delete-old-bookings-form" onsubmit="handleDeleteOldBookingsPreview(event)" class="hidden mt-3 space-y-3 bg-white p-4 rounded-2xl border border-ice-200/60 shadow-soft">
+                    <p class="text-xs text-slate-500">Padam tempahan yang <b>tarikh tempahannya</b> lebih lama drpd bilangan bulan di bawah. Anda akan nampak BILANGAN sebenar dulu utk disahkan — tiada apa dipadam pada langkah ni. Disyorkan muat turun Excel/PDF dulu (di atas) sbg simpanan sebelum padam.</p>
+                    <p id="delete-old-bookings-error" class="hidden text-red-600 text-xs bg-red-50 border border-red-100 rounded-lg px-3 py-2"></p>
+                    <div>
+                        <label class="text-xs text-slate-500 block mb-1">Padam tempahan lebih lama drpd (bulan)</label>
+                        <input type="number" name="months" min="1" required placeholder="Cth: 6" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label class="text-xs text-slate-500 block mb-2">Status yang nak dipadam</label>
+                        <div class="grid grid-cols-2 gap-y-2 gap-x-3 text-sm">
+                            <label class="flex items-center gap-2 col-span-2"><input type="checkbox" id="delete-status-all" checked onchange="toggleDeleteStatusAll(this)"> <span class="font-semibold">Semua Status</span></label>
+                            <label class="flex items-center gap-2"><input type="checkbox" class="delete-status-item" value="pending" disabled> Pending</label>
+                            <label class="flex items-center gap-2"><input type="checkbox" class="delete-status-item" value="approved" disabled> Diluluskan</label>
+                            <label class="flex items-center gap-2"><input type="checkbox" class="delete-status-item" value="rejected" disabled> Ditolak</label>
+                            <label class="flex items-center gap-2"><input type="checkbox" class="delete-status-item" value="cancelled" disabled> Dibatalkan</label>
+                        </div>
+                    </div>
+                    <button type="submit" class="w-full bg-red-600 text-white font-bold rounded-xl py-2.5 text-sm hover:bg-red-700">Semak &amp; Padam</button>
+                </form>
+            `;
+        }
+
+        function toggleDeleteStatusAll(checkbox) {
+            document.querySelectorAll('.delete-status-item').forEach(el => {
+                el.disabled = checkbox.checked;
+                if (checkbox.checked) el.checked = false;
+            });
+        }
+
+        function collectDeleteOldBookingsPayload() {
+            const form = document.getElementById('delete-old-bookings-form');
+            const months = Number(form.elements['months'].value);
+            const allChecked = document.getElementById('delete-status-all').checked;
+            let statuses = 'all';
+            if (!allChecked) {
+                statuses = Array.from(document.querySelectorAll('.delete-status-item:checked')).map(el => el.value);
+            }
+            return { months, statuses };
+        }
+
+        async function handleDeleteOldBookingsPreview(e) {
+            e.preventDefault();
+            clearFormError('delete-old-bookings-error');
+            const payload = collectDeleteOldBookingsPayload();
+            if (Array.isArray(payload.statuses) && payload.statuses.length === 0) {
+                showFormError('delete-old-bookings-error', 'Pilih sekurang-kurangnya satu status, atau tanda "Semua Status".');
+                return;
+            }
+            const res = await apiCall('adminDeleteOldBookings', Object.assign({ dryRun: true }, payload), true);
+            if (!res.ok) { showFormError('delete-old-bookings-error', res.error); return; }
+
+            if (res.data.count === 0) {
+                showToast('Tiada Rekod', `Tiada tempahan lebih lama drpd ${formatDateLabel(res.data.cutoffDate)} (ikut status yang dipilih).`, 'warning');
+                return;
+            }
+            const statusLabel = payload.statuses === 'all' ? 'SEMUA status' : payload.statuses.join(', ').toUpperCase();
+            showConfirmModal(
+                'Padam Tempahan Lama?',
+                `Anda akan PADAM KEKAL ${res.data.count} tempahan (tarikh sebelum ${formatDateLabel(res.data.cutoffDate)}, status: ${statusLabel}). Tindakan ni TAK BOLEH dibatalkan. Teruskan?`,
+                () => confirmDeleteOldBookings(payload)
+            );
+        }
+
+        async function confirmDeleteOldBookings(payload) {
+            const res = await apiCall('adminDeleteOldBookings', Object.assign({ dryRun: false }, payload), true);
+            if (!res.ok) { showToast('Gagal', res.error || 'Gagal padam tempahan lama.', 'error'); return; }
+            showToast('Berjaya', `${res.data.deleted} tempahan lama telah dipadam.`, 'success');
+            renderAdminBookings();
+        }
+
+        // --- Eksport senarai tempahan (ikut penapis status semasa) ---
+        function exportBookingsExcel() {
+            if (typeof XLSX === 'undefined') { showToast('Tak Boleh Eksport', 'Pustaka Excel gagal dimuatkan (semak sambungan internet), cuba refresh.', 'error'); return; }
+            const rows = adminBookingsCache.map(b => ({
+                'ID Tempahan': b.id, 'Status': String(b.status || '').toUpperCase(),
+                'Bilik': ((state.initData.rooms || []).find(r => r.id === b.roomId) || {}).name || b.roomId,
+                'Tarikh': b.date, 'Masa': formatSlotRangeClient(b.timeSlots || []),
+                'Nama Pemohon': b.applicantName, 'Jabatan': b.department, 'Tujuan': b.purpose,
+                'Emel': b.email, 'No. Telefon': String(b.phone || ''),
+                'Tarikh Mohon': b.createdAt ? new Date(b.createdAt).toLocaleString('ms-MY') : ''
+            }));
+            const ws = XLSX.utils.json_to_sheet(rows);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Tempahan');
+            XLSX.writeFile(wb, `tempahan-${state.adminBookingFilter}-${fmtDateStr(new Date())}.xlsx`);
+        }
+
+        function exportBookingsPDF() {
+            if (typeof window.jspdf === 'undefined') { showToast('Tak Boleh Eksport', 'Pustaka PDF gagal dimuatkan (semak sambungan internet), cuba refresh.', 'error'); return; }
+            const doc = new window.jspdf.jsPDF({ orientation: 'landscape' });
+            const settings = state.initData.settings || {};
+            doc.setFontSize(14);
+            doc.text(`Senarai Tempahan — ${settings.schoolName || 'Sistem Tempahan Fasiliti'}`, 14, 15);
+            doc.setFontSize(9);
+            doc.text(`Penapis status: ${String(state.adminBookingFilter || '').toUpperCase()} • Dijana: ${new Date().toLocaleString('ms-MY')}`, 14, 21);
+            doc.autoTable({
+                startY: 26,
+                head: [['Bilik', 'Tarikh', 'Masa', 'Pemohon', 'Jabatan', 'Emel', 'No. Telefon', 'Status']],
+                body: adminBookingsCache.map(b => [
+                    ((state.initData.rooms || []).find(r => r.id === b.roomId) || {}).name || b.roomId,
+                    b.date, formatSlotRangeClient(b.timeSlots || []), b.applicantName, b.department, b.email, String(b.phone || ''), String(b.status || '').toUpperCase()
+                ]),
+                styles: { fontSize: 8 },
+                headStyles: { fillColor: [30, 58, 138] }
+            });
+            doc.save(`tempahan-${state.adminBookingFilter}-${fmtDateStr(new Date())}.pdf`);
+        }
+
+        async function adminSetBookingStatus(bookingId, status) {
+            const res = await apiCall('adminUpdateBookingStatus', { bookingId: bookingId, status: status }, true);
+            if (!res.ok) { showToast('Gagal', res.error || 'Gagal kemaskini status.', 'error'); return; }
+            renderAdminBookings();
+        }
+
+        // --- Admin: Rooms (+ gambar Drive + padam kekal) ---
+        function roomImagesManagerHtml(room) {
+            const imgs = room.images || [];
+            const thumbs = imgs.map(fileId => `
+                <div class="relative w-14 h-14 rounded-lg overflow-hidden shrink-0 border border-ice-200">
+                    <img src="${escapeAttr(resolveImageUrl(fileId))}" class="w-full h-full object-cover">
+                    <button onclick="handleDeleteRoomImage('${room.id}','${fileId}')" class="absolute top-0 right-0 bg-black/60 text-white w-4 h-4 flex items-center justify-center text-[9px] leading-none rounded-bl">✕</button>
+                </div>`).join('');
+            const canAddMore = imgs.length < 5;
+            return `
+                <div class="flex gap-2 flex-wrap items-center mt-3 pt-3 border-t border-ice-200">
+                    ${thumbs}
+                    ${canAddMore ? `
+                    <label class="w-14 h-14 rounded-lg border-2 border-dashed border-ice-300 flex items-center justify-center text-slate-400 cursor-pointer hover:border-blue-400 hover:text-blue-600 shrink-0">
+                        <i class="ph ph-plus text-lg"></i>
+                        <input type="file" accept="image/*" class="hidden" onchange="handleUploadRoomImage(event,'${room.id}')">
+                    </label>` : ''}
+                    <span class="text-[10px] text-slate-400">${imgs.length}/5 gambar</span>
+                </div>`;
+        }
+
+        function resizeImageFile(file, maxDim, quality) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onerror = () => reject(new Error('Gagal baca fail.'));
+                reader.onload = () => {
+                    const img = new Image();
+                    img.onerror = () => reject(new Error('Fail bukan imej yang sah.'));
+                    img.onload = () => {
+                        let w = img.width, h = img.height;
+                        if (w > maxDim || h > maxDim) {
+                            if (w > h) { h = Math.round(h * maxDim / w); w = maxDim; }
+                            else { w = Math.round(w * maxDim / h); h = maxDim; }
+                        }
+                        const canvas = document.createElement('canvas');
+                        canvas.width = w; canvas.height = h;
+                        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                        const dataUrl = canvas.toDataURL('image/jpeg', quality || 0.8);
+                        resolve(dataUrl.split(',')[1]);
+                    };
+                    img.src = reader.result;
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        async function handleUploadRoomImage(e, roomId) {
+            const file = e.target.files[0];
+            e.target.value = '';
+            if (!file) return;
+            if (!file.type.startsWith('image/')) { showToast('Ralat', 'Sila pilih fail imej.', 'error'); return; }
+            showToast('Sedang Upload', 'Gambar sedang dimuat naik...', 'info');
+            try {
+                const base64 = await resizeImageFile(file, 1280, 0.8);
+                const res = await apiCall('adminUploadRoomImage', { roomId: roomId, base64Data: base64, mimeType: 'image/jpeg', filename: file.name || 'room.jpg' }, true);
+                if (!res.ok) { showToast('Gagal Upload', res.error || 'Gagal upload gambar.', 'error'); return; }
+                showToast('Berjaya', 'Gambar berjaya ditambah.', 'success');
+                await refreshInitData();
+                renderAdminRooms();
+            } catch (err) {
+                showToast('Ralat', err.message || 'Gagal proses gambar.', 'error');
+            }
+        }
+
+        function handleDeleteRoomImage(roomId, fileId) {
+            showConfirmModal('Padam Gambar', 'Padam gambar ni? Tindakan ni tak boleh diundur.', async () => {
+                const res = await apiCall('adminDeleteRoomImage', { roomId: roomId, fileId: fileId }, true);
+                if (!res.ok) { showToast('Gagal', res.error || 'Gagal padam gambar.', 'error'); return; }
+                await refreshInitData();
+                renderAdminRooms();
+            });
+        }
+
+        function handleDeleteRoomHard(roomId, force) {
+            const room = adminRoomsCache.find(r => r.id === roomId) || {};
+            const roomName = room.name || roomId;
+            showConfirmModal(
+                force ? 'PASTI Padam Kekal?' : 'Padam Bilik Secara Kekal?',
+                force
+                    ? `"${roomName}" ada rekod tempahan berkaitan. Padam KEKAL akan tinggalkan rekod tempahan lama tanpa nama bilik yang sah. Teruskan juga?`
+                    : `Padam "${roomName}" secara kekal? Lebih selamat guna "Nyahaktifkan" je kalau boleh — tindakan ni tak boleh diundur.`,
+                async () => {
+                    const res = await apiCall('adminDeleteRoom', { roomId: roomId, force: !!force }, true);
+                    if (!res.ok) {
+                        if (res.code === 'ROOM_HAS_BOOKINGS') { handleDeleteRoomHard(roomId, true); return; }
+                        showToast('Gagal', res.error || 'Gagal padam bilik.', 'error');
+                        return;
+                    }
+                    showToast('Berjaya', 'Bilik dipadam secara kekal.', 'success');
+                    await refreshInitData();
+                    renderAdminRooms();
+                }
+            );
+        }
+
+        async function renderAdminRooms() {
+            const content = document.getElementById('admin-tab-content');
+            const res = await apiCall('adminListRooms', {}, true);
+            if (!res.ok) { content.innerHTML = adminErrorBlock(res.error); return; }
+            adminRoomsCache = res.data;
+
+            const cards = res.data.map(r => `
+                <div class="p-4">
+                    <div class="flex justify-between items-start mb-2 gap-2">
+                        <div class="min-w-0">
+                            <p class="font-bold text-slate-800 text-sm truncate">${escapeHtml(r.name)}</p>
+                            <p class="text-xs text-slate-400">${escapeHtml(r.type)} • ${escapeHtml(String(r.capacity))} pax</p>
+                        </div>
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded shrink-0 ${r.status === 'active' ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}">${r.status === 'active' ? 'AKTIF' : 'TIDAK AKTIF'}</span>
+                    </div>
+                    <p class="text-xs text-slate-500 mb-3">${escapeHtml(r.features)}</p>
+                    <div class="flex gap-2">
+                        <button onclick="toggleEditRoomForm('${r.id}')" class="flex-1 bg-blue-50 text-blue-700 text-xs font-bold py-2 rounded-lg hover:bg-blue-100">Edit</button>
+                        <button onclick="adminToggleRoomStatus('${r.id}','${r.status}')" class="flex-1 bg-slate-100 text-slate-700 text-xs font-bold py-2 rounded-lg hover:bg-slate-200">${r.status === 'active' ? 'Nyahaktifkan' : 'Aktifkan'}</button>
+                        <button onclick="handleDeleteRoomHard('${r.id}', false)" class="bg-red-50 text-red-600 text-xs font-bold py-2 px-3 rounded-lg hover:bg-red-100" title="Padam Kekal"><i class="ph ph-trash"></i></button>
+                    </div>
+                    ${roomImagesManagerHtml(r)}
+                    <form id="edit-room-form-${r.id}" onsubmit="handleEditRoom(event,'${r.id}')" class="hidden space-y-2 pt-3 mt-3 border-t border-ice-200">
+                        <input type="text" name="name" value="${escapeAttr(r.name)}" placeholder="Nama Bilik" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2 text-sm outline-none focus:border-blue-500">
+                        <input type="text" name="type" value="${escapeAttr(r.type)}" placeholder="Jenis" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2 text-sm outline-none focus:border-blue-500">
+                        <input type="number" name="capacity" min="1" value="${escapeAttr(String(r.capacity))}" placeholder="Kapasiti (pax)" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2 text-sm outline-none focus:border-blue-500">
+                        <input type="text" name="features" value="${escapeAttr(r.features)}" placeholder="Kemudahan (pisah dgn koma)" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2 text-sm outline-none focus:border-blue-500">
+                        <button type="submit" class="w-full bg-slate-800 text-white font-bold rounded-xl py-2 text-sm hover:bg-slate-900">Kemaskini Bilik</button>
+                    </form>
+                </div>
+            `).join('');
+
+            content.innerHTML = `
+                ${cards ? `<div class="bg-white rounded-2xl border border-ice-200/60 shadow-soft divide-y divide-ice-100 overflow-hidden mb-2">${cards}</div>` : '<div class="bg-white rounded-2xl border border-ice-200/60 p-8 text-center mb-2"><p class="text-sm text-slate-400">Belum ada bilik.</p></div>'}
+                <button onclick="document.getElementById('add-room-form').classList.toggle('hidden')" class="w-full mt-2 border-2 border-dashed border-ice-300 text-slate-500 font-semibold text-sm py-3 rounded-2xl hover:border-blue-400 hover:text-blue-600 transition-all">
+                    <i class="ph ph-plus-circle"></i> Tambah Bilik Baru
+                </button>
+                <form id="add-room-form" onsubmit="handleAddRoom(event)" class="hidden mt-3 space-y-3 bg-white p-4 rounded-2xl border border-ice-200/60 shadow-soft">
+                    <p id="add-room-error" class="hidden text-red-600 text-xs bg-red-50 border border-red-100 rounded-lg px-3 py-2"></p>
+                    <input type="text" name="name" required placeholder="Nama Bilik" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500">
+                    <input type="text" name="type" placeholder="Jenis (cth: Dewan, Makmal)" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500">
+                    <input type="number" name="capacity" min="1" placeholder="Kapasiti (pax)" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500">
+                    <input type="text" name="features" placeholder="Kemudahan (pisah dgn koma)" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500">
+                    <button type="submit" class="w-full bg-blue-600 text-white font-bold rounded-xl py-2.5 text-sm hover:bg-blue-700">Simpan Bilik</button>
+                    <p class="text-[11px] text-slate-400">Gambar diupload lepas bilik disimpan (guna butang "+" pada kad bilik).</p>
+                </form>
+            `;
+        }
+
+        function toggleEditRoomForm(roomId) {
+            document.getElementById('edit-room-form-' + roomId).classList.toggle('hidden');
+        }
+
+        async function handleAddRoom(e) {
+            e.preventDefault();
+            clearFormError('add-room-error');
+            const form = e.target;
+            const res = await apiCall('adminAddRoom', { name: form.elements['name'].value, type: form.elements['type'].value, capacity: form.elements['capacity'].value, features: form.elements['features'].value }, true);
+            if (!res.ok) { showFormError('add-room-error', res.error); return; }
+            await refreshInitData();
+            renderAdminRooms();
+        }
+
+        async function handleEditRoom(e, roomId) {
+            e.preventDefault();
+            const form = e.target;
+            const res = await apiCall('adminUpdateRoom', { roomId: roomId, name: form.elements['name'].value, type: form.elements['type'].value, capacity: form.elements['capacity'].value, features: form.elements['features'].value }, true);
+            if (!res.ok) { showToast('Gagal', res.error || 'Gagal kemaskini bilik.', 'error'); return; }
+            await refreshInitData();
+            renderAdminRooms();
+        }
+
+        async function adminToggleRoomStatus(roomId, currentStatus) {
+            const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
+            const res = await apiCall('adminUpdateRoom', { roomId: roomId, status: newStatus }, true);
+            if (!res.ok) { showToast('Gagal', res.error || 'Gagal kemaskini bilik.', 'error'); return; }
+            await refreshInitData();
+            renderAdminRooms();
+        }
+
+        // --- Admin: Blocked dates ---
+        async function renderAdminBlocked() {
+            const content = document.getElementById('admin-tab-content');
+            const res = await apiCall('adminListBlockedDates', {}, true);
+            if (!res.ok) { content.innerHTML = adminErrorBlock(res.error); return; }
+
+            const roomOptions = ['<option value="ALL">Semua Bilik</option>'].concat(
+                (state.initData.rooms || []).map(r => `<option value="${escapeAttr(r.id)}">${escapeHtml(r.name)}</option>`)
+            ).join('');
+
+            const rows = res.data.slice().sort((a, b) => a.startDate < b.startDate ? 1 : -1).map(b => {
+                const roomLabel = b.roomId === 'ALL' ? 'Semua Bilik' : (((state.initData.rooms || []).find(r => r.id === b.roomId) || {}).name || b.roomId);
+                const dateLabel = b.startDate === b.endDate ? formatDateLabel(b.startDate) : `${formatDateLabel(b.startDate)} — ${formatDateLabel(b.endDate)}`;
+                return `
+                    <div class="p-4 flex justify-between items-center gap-3">
+                        <div class="min-w-0">
+                            <p class="font-bold text-slate-800 text-sm truncate">${escapeHtml(dateLabel)}</p>
+                            <p class="text-xs text-slate-500 truncate">${escapeHtml(roomLabel)} • ${escapeHtml(b.reason || '-')}</p>
+                        </div>
+                        <button onclick="adminRemoveBlockedDate('${b.id}')" class="text-red-500 hover:bg-red-50 p-2 rounded-lg shrink-0"><i class="ph ph-trash"></i></button>
+                    </div>`;
+            }).join('');
+
+            content.innerHTML = `
+                ${rows ? `<div class="bg-white rounded-2xl border border-ice-200/60 shadow-soft divide-y divide-ice-100 overflow-hidden mb-2">${rows}</div>` : '<div class="bg-white rounded-2xl border border-ice-200/60 p-8 text-center mb-2"><p class="text-sm text-slate-400">Tiada tarikh off.</p></div>'}
+                <button onclick="document.getElementById('add-blocked-form').classList.toggle('hidden')" class="w-full mt-2 border-2 border-dashed border-ice-300 text-slate-500 font-semibold text-sm py-3 rounded-2xl hover:border-blue-400 hover:text-blue-600 transition-all">
+                    <i class="ph ph-plus-circle"></i> Tambah Tarikh Off
+                </button>
+                <form id="add-blocked-form" onsubmit="handleAddBlockedDate(event)" class="hidden mt-3 space-y-3 bg-white p-4 rounded-2xl border border-ice-200/60 shadow-soft">
+                    <p id="add-blocked-error" class="hidden text-red-600 text-xs bg-red-50 border border-red-100 rounded-lg px-3 py-2"></p>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div><label class="text-xs text-slate-500">Dari Tarikh</label><input type="date" name="startDate" required class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500"></div>
+                        <div><label class="text-xs text-slate-500">Hingga Tarikh</label><input type="date" name="endDate" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500"></div>
+                    </div>
+                    <select name="roomId" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500">${roomOptions}</select>
+                    <input type="text" name="reason" placeholder="Sebab (cth: Cuti Sekolah, Maintenance) — dipaparkan kpd user" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500">
+                    <button type="submit" class="w-full bg-blue-600 text-white font-bold rounded-xl py-2.5 text-sm hover:bg-blue-700">Simpan</button>
+                </form>
+            `;
+        }
+
+        async function handleAddBlockedDate(e) {
+            e.preventDefault();
+            clearFormError('add-blocked-error');
+            const form = e.target;
+            const res = await apiCall('adminAddBlockedDate', { startDate: form.elements['startDate'].value, endDate: form.elements['endDate'].value || form.elements['startDate'].value, roomId: form.elements['roomId'].value, reason: form.elements['reason'].value }, true);
+            if (!res.ok) { showFormError('add-blocked-error', res.error); return; }
+            await refreshInitData();
+            renderAdminBlocked();
+        }
+
+        function adminRemoveBlockedDate(id) {
+            showConfirmModal('Buang Tarikh Off', 'Buang sekatan tarikh ni? Tarikh akan boleh ditempah semula.', async () => {
+                const res = await apiCall('adminRemoveBlockedDate', { id: id }, true);
+                if (!res.ok) { showToast('Gagal', res.error || 'Gagal padam.', 'error'); return; }
+                await refreshInitData();
+                renderAdminBlocked();
+            });
+        }
+
+        // --- Admin: Statistik / Dashboard (kekerapan tempahan ikut bilik) ---
+        async function renderAdminStats() {
+            const content = document.getElementById('admin-tab-content');
+            const res = await apiCall('adminBookingStats', {}, true);
+            if (!res.ok) { content.innerHTML = adminErrorBlock(res.error); return; }
+            const d = res.data;
+            const maxCount = Math.max(1, ...d.byRoom.map(r => r.count), 0);
+
+            const bars = d.byRoom.map((r, i) => {
+                const pct = Math.max(4, Math.round((r.count / maxCount) * 100));
+                const isTop = i === 0 && r.count > 0;
+                return `
+                    <div class="mb-3">
+                        <div class="flex justify-between items-baseline mb-1 gap-2">
+                            <p class="text-sm font-semibold text-slate-700 truncate flex items-center gap-1.5">${escapeHtml(r.roomName)} ${isTop ? '<span class="text-[9px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded shrink-0">PALING KERAP</span>' : ''}</p>
+                            <p class="text-xs font-bold text-slate-500 shrink-0">${r.count}</p>
+                        </div>
+                        <div class="w-full bg-slate-100 rounded-full h-2.5">
+                            <div class="h-2.5 rounded-full ${isTop ? 'bg-amber-500' : 'bg-blue-600'}" style="width:${pct}%"></div>
+                        </div>
+                    </div>`;
+            }).join('');
+
+            // v3.0: 4 KPI dulu 4 kad shadow BERASINGAN (nampak "template dashboard generik") —
+            // kini SATU stat-strip bercantum dgn divider dalaman, konsisten dgn prinsip "one
+            // well-labeled strip beats four decorative tiles". kpiTile skrg pulang kandungan
+            // sahaja (bukan kad penuh) sebab wrapper luar dah bagi bg/border/shadow.
+            const kpiTile = (label, value, cls) => `
+                <div class="text-center px-1 min-w-0">
+                    <p class="text-xl font-bold ${cls || 'text-slate-800'} truncate">${value}</p>
+                    <p class="text-[10px] text-slate-400 mt-0.5 truncate">${label}</p>
+                </div>`;
+
+            content.innerHTML = `
+                <div class="grid grid-cols-4 bg-white rounded-2xl p-3 border border-ice-200/60 shadow-soft divide-x divide-ice-100 mb-5">
+                    ${kpiTile('Pending', d.byStatus.pending, 'text-amber-500')}
+                    ${kpiTile('Diluluskan', d.byStatus.approved, 'text-emerald-600')}
+                    ${kpiTile('Ditolak', d.byStatus.rejected, 'text-red-500')}
+                    ${kpiTile('Dibatalkan', d.byStatus.cancelled, 'text-slate-400')}
+                </div>
+                <div class="bg-ice-100 border border-ice-200/60 rounded-2xl p-3 mb-5 flex items-center gap-2">
+                    <i class="ph-fill ph-chart-line-up text-blue-600 text-lg shrink-0"></i>
+                    <p class="text-xs text-blue-700"><span class="font-bold">${d.last30Days}</span> tempahan (pending + diluluskan) dalam 30 hari lepas.</p>
+                </div>
+                <div class="bg-white rounded-2xl p-4 border border-ice-200/60 shadow-soft">
+                    <h3 class="font-bold text-slate-800 mb-3 text-sm flex items-center gap-2"><i class="ph ph-chart-bar-horizontal text-blue-600"></i> Kekerapan Tempahan Ikut Bilik</h3>
+                    ${bars || '<p class="text-sm text-slate-400 text-center py-6">Tiada data tempahan lagi.</p>'}
+                    ${d.byRoom.length ? `<p class="text-[11px] text-slate-400 mt-4 flex items-start gap-1.5"><i class="ph ph-info mt-0.5 shrink-0"></i> Bilik paling kerap ditempah biasanya paling cepat uzur — elok dijadikan keutamaan semakan/maintenance berkala.</p>` : ''}
+                </div>
+            `;
+        }
+
+        // --- Admin: Senarai Nama Guru (sumber dropdown Nama Pemohon dlm borang tempahan) ---
+        async function renderAdminTeachers() {
+            const content = document.getElementById('admin-tab-content');
+            const res = await apiCall('adminListTeachers', {}, true);
+            if (!res.ok) { content.innerHTML = adminErrorBlock(res.error); return; }
+            adminTeachersCache = res.data || [];
+
+            const rows = adminTeachersCache.map(t => `
+                <div class="p-3 flex justify-between items-center gap-3">
+                    <p class="font-medium text-slate-800 text-sm truncate">${escapeHtml(t.name)}</p>
+                    <div class="flex gap-1 shrink-0">
+                        <button onclick="editTeacherPrompt('${t.id}')" class="text-slate-500 hover:bg-slate-100 p-2 rounded-lg"><i class="ph ph-pencil-simple"></i></button>
+                        <button onclick="deleteTeacherConfirm('${t.id}','${escapeAttr(t.name)}')" class="text-red-500 hover:bg-red-50 p-2 rounded-lg"><i class="ph ph-trash"></i></button>
+                    </div>
+                </div>`).join('');
+
+            content.innerHTML = `
+                <p class="text-xs text-slate-400 mb-3">${adminTeachersCache.length} nama dalam senarai. Senarai ni jadi sumber dropdown carian "Nama Pemohon" dalam borang tempahan awam.</p>
+                <div class="bg-white p-4 rounded-2xl border border-ice-200/60 shadow-soft mb-4 space-y-2">
+                    <label class="text-xs text-slate-500 font-semibold">Tambah Nama (satu, ATAU tampal banyak sekali gus)</label>
+                    <textarea id="teacher-bulk-input" rows="3" placeholder="Taip satu nama — atau tampal banyak nama, satu nama satu baris" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500"></textarea>
+                    <button onclick="handleBulkAddTeachers()" class="w-full bg-blue-600 text-white font-bold rounded-xl py-2.5 text-sm hover:bg-blue-700">Tambah</button>
+                </div>
+                ${rows ? `<div class="bg-white rounded-2xl border border-ice-200/60 shadow-soft divide-y divide-ice-100 overflow-hidden">${rows}</div>` : '<div class="bg-white rounded-2xl border border-ice-200/60 p-8 text-center"><p class="text-sm text-slate-400">Senarai kosong lagi — tambah nama di atas.</p></div>'}
+            `;
+        }
+
+        // NOTA: mesej maklum balas guna showToast() (BUKAN elemen <p> dalam #admin-tab-content) —
+        // sengaja, sebab renderAdminTeachers() kat bawah gantikan SELURUH innerHTML #admin-tab-content
+        // (termasuk mana2 <p> mesej di dalamnya) sejurus lepas ni dipanggil. Toast hidup kat DOM
+        // ASINGAN (#toast, luar #admin-tab-content) jadi ia SELAMAT drpd "wipe" tu & btul2 nampak.
+        async function handleBulkAddTeachers() {
+            const ta = document.getElementById('teacher-bulk-input');
+            const names = ta.value.split('\n').map(s => s.trim()).filter(Boolean);
+            if (!names.length) {
+                showToast('Tiada Nama', 'Taip sekurang-kurangnya satu nama dulu.', 'warning');
+                return;
+            }
+            const res = await apiCall('adminAddTeachers', { names: names }, true);
+            if (!res.ok) {
+                showToast('Gagal', res.error || 'Gagal tambah nama.', 'error');
+                return;
+            }
+            ta.value = '';
+            showToast('Berjaya', `${res.data.added.length} nama ditambah` + (res.data.skipped.length ? `, ${res.data.skipped.length} dah wujud (diabaikan).` : '.'), 'success');
+            await refreshInitData();
+            renderAdminTeachers();
+        }
+
+        function editTeacherPrompt(id) {
+            const teacher = adminTeachersCache.find(t => t.id === id);
+            if (!teacher) return;
+            showPromptModal('Tukar Nama', teacher.name, async (newName) => {
+                const res = await apiCall('adminUpdateTeacher', { id: id, name: newName }, true);
+                if (!res.ok) { showToast('Gagal', res.error || 'Gagal kemaskini nama.', 'error'); return; }
+                await refreshInitData();
+                renderAdminTeachers();
+            });
+        }
+
+        function deleteTeacherConfirm(id, name) {
+            showConfirmModal('Padam Nama', `Padam "${name}" drpd senarai guru? Tempahan lama yang dah guna nama ni tak terjejas.`, async () => {
+                const res = await apiCall('adminDeleteTeacher', { id: id }, true);
+                if (!res.ok) { showToast('Gagal', res.error || 'Gagal padam nama.', 'error'); return; }
+                await refreshInitData();
+                renderAdminTeachers();
+            });
+        }
+
+        // --- Admin: Timeslots ---
+        async function renderAdminTimeslots() {
+            const content = document.getElementById('admin-tab-content');
+            const res = await apiCall('adminGetTimeslots', {}, true);
+            if (!res.ok) { content.innerHTML = adminErrorBlock(res.error); return; }
+            adminTimeslotsDraft.normal = res.data.filter(t => t.day === 'normal').sort((a, b) => a.order - b.order).map(t => ({ label: t.label, disabled: !!t.disabled }));
+            adminTimeslotsDraft.friday = res.data.filter(t => t.day === 'friday').sort((a, b) => a.order - b.order).map(t => ({ label: t.label, disabled: !!t.disabled }));
+            renderAdminTimeslotsUI();
+        }
+
+        function renderAdminTimeslotsUI() {
+            const content = document.getElementById('admin-tab-content');
+            const dayTabs = ['normal', 'friday'].map(d => `<button onclick="switchAdminTimeslotDay('${d}')" class="px-3 py-1.5 rounded-full text-xs font-semibold border ${adminTimeslotsDay === d ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-ice-200'}">${d === 'normal' ? 'Hari Biasa' : 'Jumaat'}</button>`).join('');
+            const rows = adminTimeslotsDraft[adminTimeslotsDay].map((s, idx) => `
+                <div class="flex items-center gap-2 bg-white border border-ice-200/60 rounded-xl p-2.5 mb-2 shadow-soft">
+                    <span class="text-xs text-slate-400 w-5 text-center shrink-0">${idx + 1}</span>
+                    <input type="text" value="${escapeAttr(s.label)}" onchange="updateAdminTimeslotLabel(${idx}, this.value)" class="flex-1 min-w-0 bg-ice-100 shadow-soft-inset border border-transparent rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-500">
+                    <label class="flex items-center gap-1 text-[10px] text-slate-500 shrink-0"><input type="checkbox" ${s.disabled ? 'checked' : ''} onchange="updateAdminTimeslotDisabled(${idx}, this.checked)"> Rehat</label>
+                    <button onclick="moveAdminTimeslot(${idx},-1)" class="p-1.5 text-slate-400 hover:text-slate-700 shrink-0"><i class="ph ph-arrow-up"></i></button>
+                    <button onclick="moveAdminTimeslot(${idx},1)" class="p-1.5 text-slate-400 hover:text-slate-700 shrink-0"><i class="ph ph-arrow-down"></i></button>
+                    <button onclick="removeAdminTimeslot(${idx})" class="p-1.5 text-red-400 hover:text-red-600 shrink-0"><i class="ph ph-trash"></i></button>
+                </div>`).join('');
+            content.innerHTML = `
+                <div class="flex gap-2 mb-4">${dayTabs}</div>
+                <p id="admin-timeslots-msg" class="hidden text-xs rounded-lg px-3 py-2 mb-3"></p>
+                <div id="admin-timeslots-rows">${rows || '<p class="text-sm text-slate-400 text-center py-4">Tiada slot lagi.</p>'}</div>
+                <button onclick="addAdminTimeslot()" class="w-full mt-1 border-2 border-dashed border-ice-300 text-slate-500 font-semibold text-sm py-2.5 rounded-xl hover:border-blue-400 hover:text-blue-600 transition-all"><i class="ph ph-plus-circle"></i> Tambah Slot</button>
+                <button onclick="saveAdminTimeslots()" class="w-full mt-3 bg-blue-600 text-white font-bold rounded-xl py-2.5 text-sm hover:bg-blue-700">Simpan Jadual "${adminTimeslotsDay === 'normal' ? 'Hari Biasa' : 'Jumaat'}"</button>
+                <p class="text-[11px] text-slate-400 mt-3 px-1">Nota: tanda "Rehat" utk slot bukan-boleh-tempah (cth. waktu rehat/solat) — tempahan berterusan boleh merentasi slot ni secara automatik.</p>
+            `;
+        }
+        function switchAdminTimeslotDay(day) { adminTimeslotsDay = day; renderAdminTimeslotsUI(); }
+        function updateAdminTimeslotLabel(idx, val) { adminTimeslotsDraft[adminTimeslotsDay][idx].label = val; }
+        function updateAdminTimeslotDisabled(idx, val) { adminTimeslotsDraft[adminTimeslotsDay][idx].disabled = val; }
+        function moveAdminTimeslot(idx, dir) {
+            const arr = adminTimeslotsDraft[adminTimeslotsDay];
+            const newIdx = idx + dir;
+            if (newIdx < 0 || newIdx >= arr.length) return;
+            const tmp = arr[idx]; arr[idx] = arr[newIdx]; arr[newIdx] = tmp;
+            renderAdminTimeslotsUI();
+        }
+        function removeAdminTimeslot(idx) { adminTimeslotsDraft[adminTimeslotsDay].splice(idx, 1); renderAdminTimeslotsUI(); }
+        function addAdminTimeslot() { adminTimeslotsDraft[adminTimeslotsDay].push({ label: '', disabled: false }); renderAdminTimeslotsUI(); }
+        async function saveAdminTimeslots() {
+            const msg = document.getElementById('admin-timeslots-msg');
+            msg.classList.add('hidden');
+            const slots = adminTimeslotsDraft[adminTimeslotsDay].filter(s => s.label.trim());
+            const res = await apiCall('adminUpdateTimeslots', { day: adminTimeslotsDay, slots: slots }, true);
+            msg.classList.remove('hidden');
+            if (!res.ok) { msg.className = 'text-red-600 text-xs bg-red-50 border border-red-100 rounded-lg px-3 py-2 mb-3'; msg.textContent = res.error || 'Gagal simpan.'; return; }
+            msg.className = 'text-emerald-600 text-xs bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 mb-3';
+            msg.textContent = 'Jadual disimpan.';
+            await refreshInitData();
+        }
+
+        // --- Admin: Users ---
+        async function renderAdminUsers() {
+            const content = document.getElementById('admin-tab-content');
+            const res = await apiCall('adminListUsers', {}, true);
+            if (!res.ok) { content.innerHTML = adminErrorBlock(res.error); return; }
+
+            const rows = res.data.map(u => `
+                <div class="p-4">
+                    <div class="flex justify-between items-start mb-2 gap-2">
+                        <div class="min-w-0">
+                            <p class="font-bold text-slate-800 text-sm truncate">${escapeHtml(u.name)}</p>
+                            <p class="text-xs text-slate-400 truncate">${escapeHtml(u.email)}</p>
+                            <p class="text-[11px] text-slate-400 truncate">${escapeHtml(u.department || '-')} • ${escapeHtml(u.phone || '-')}</p>
+                        </div>
+                        <div class="flex flex-col items-end gap-1 shrink-0">
+                            <span class="text-[10px] font-bold px-2 py-0.5 rounded ${u.role === 'admin' ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-500'}">${u.role === 'admin' ? 'ADMIN' : 'USER'}</span>
+                            <span class="text-[10px] font-bold px-2 py-0.5 rounded ${u.status === 'active' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-500'}">${u.status === 'active' ? 'AKTIF' : 'DINYAHAKTIFKAN'}</span>
+                        </div>
+                    </div>
+                    <div class="flex gap-2 mt-2">
+                        <button onclick="adminToggleUserRole('${u.id}','${u.role}')" class="flex-1 bg-slate-100 text-slate-700 text-xs font-bold py-2 rounded-lg hover:bg-slate-200">${u.role === 'admin' ? 'Buang Admin' : 'Jadikan Admin'}</button>
+                        <button onclick="adminToggleUserStatus('${u.id}','${u.status}')" class="flex-1 bg-slate-100 text-slate-700 text-xs font-bold py-2 rounded-lg hover:bg-slate-200">${u.status === 'active' ? 'Nyahaktifkan' : 'Aktifkan'}</button>
+                    </div>
+                </div>
+            `).join('');
+
+            content.innerHTML = `
+                ${rows ? `<div class="bg-white rounded-2xl border border-ice-200/60 shadow-soft divide-y divide-ice-100 overflow-hidden mb-2">${rows}</div>` : '<div class="bg-white rounded-2xl border border-ice-200/60 p-8 text-center mb-2"><p class="text-sm text-slate-400">Tiada pengguna berdaftar lagi.</p></div>'}
+                <button onclick="document.getElementById('add-user-form').classList.toggle('hidden')" class="w-full mt-2 border-2 border-dashed border-ice-300 text-slate-500 font-semibold text-sm py-3 rounded-2xl hover:border-blue-400 hover:text-blue-600 transition-all">
+                    <i class="ph ph-user-plus"></i> Tambah Pengguna
+                </button>
+                <form id="add-user-form" onsubmit="handleAddUser(event)" class="hidden mt-3 space-y-3 bg-white p-4 rounded-2xl border border-ice-200/60 shadow-soft">
+                    <p id="add-user-error" class="hidden text-red-600 text-xs bg-red-50 border border-red-100 rounded-lg px-3 py-2"></p>
+                    <input type="text" name="name" required placeholder="Nama Penuh" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500">
+                    <input type="email" name="email" required placeholder="Alamat Emel" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500">
+                    <input type="password" name="password" required minlength="6" placeholder="Password Sementara (min 6 aksara)" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500">
+                    <input type="text" name="department" placeholder="Jabatan (pilihan)" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500">
+                    <input type="text" name="phone" placeholder="No. Telefon (pilihan)" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500">
+                    <select name="role" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500">
+                        <option value="user">Peranan: User (staff biasa)</option>
+                        <option value="admin">Peranan: Admin (akses penuh)</option>
+                    </select>
+                    <button type="submit" class="w-full bg-blue-600 text-white font-bold rounded-xl py-2.5 text-sm hover:bg-blue-700">Cipta Akaun</button>
+                    <p class="text-[11px] text-slate-400">Bagitahu pengguna password sementara ni secara berasingan (WhatsApp/emel) — mereka boleh tukar sendiri lepas log masuk kali pertama, via Admin Panel &gt; Tetapan &gt; Akaun Saya.</p>
+                </form>
+            `;
+        }
+
+        async function handleAddUser(e) {
+            e.preventDefault();
+            clearFormError('add-user-error');
+            const form = e.target;
+            const res = await apiCall('adminCreateUser', {
+                name: form.elements['name'].value, email: form.elements['email'].value, password: form.elements['password'].value,
+                department: form.elements['department'].value, phone: form.elements['phone'].value, role: form.elements['role'].value
+            }, true);
+            if (!res.ok) { showFormError('add-user-error', res.error); return; }
+            showToast('Berjaya', 'Akaun pengguna baru dicipta.', 'success');
+            renderAdminUsers();
+        }
+
+        async function adminToggleUserRole(userId, currentRole) {
+            const newRole = currentRole === 'admin' ? 'user' : 'admin';
+            const res = await apiCall('adminSetUserRole', { userId: userId, role: newRole }, true);
+            if (!res.ok) { showToast('Gagal', res.error || 'Gagal kemaskini role.', 'error'); return; }
+            renderAdminUsers();
+        }
+
+        async function adminToggleUserStatus(userId, currentStatus) {
+            const newStatus = currentStatus === 'active' ? 'suspended' : 'active';
+            const res = await apiCall('adminSetUserStatus', { userId: userId, status: newStatus }, true);
+            if (!res.ok) { showToast('Gagal', res.error || 'Gagal kemaskini status.', 'error'); return; }
+            renderAdminUsers();
+        }
+
+        // --- Admin: Settings (+ logo) ---
+        async function renderAdminSettings() {
+            const content = document.getElementById('admin-tab-content');
+            const s = state.initData.settings || {};
+            const logoUrl = resolveImageUrl(s.schoolLogo);
+            const logoPreview = logoUrl
+                ? `<img src="${escapeAttr(logoUrl)}" class="w-16 h-16 rounded-xl object-cover border border-ice-200">`
+                : `<div class="w-16 h-16 rounded-xl bg-slate-100 flex items-center justify-center text-slate-300"><i class="ph ph-image text-2xl"></i></div>`;
+            content.innerHTML = `
+                <div class="bg-white p-4 rounded-2xl border border-ice-200/60 shadow-soft mb-4">
+                    <label class="text-xs text-slate-500 block mb-2">Logo Rasmi (PWA, favicon &amp; app)</label>
+                    <div class="flex items-center gap-3">
+                        ${logoPreview}
+                        <label class="px-3 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold cursor-pointer hover:bg-slate-200">
+                            Tukar Logo
+                            <input type="file" accept="image/*" class="hidden" onchange="handleUploadLogo(event)">
+                        </label>
+                    </div>
+                    <p id="logo-upload-msg" class="hidden text-xs rounded-lg px-3 py-2 mt-2"></p>
+                </div>
+                <form id="settings-form" onsubmit="handleSaveSettings(event)" class="space-y-3 bg-white p-4 rounded-2xl border border-ice-200/60 shadow-soft">
+                    <p id="settings-error" class="hidden text-red-600 text-xs bg-red-50 border border-red-100 rounded-lg px-3 py-2"></p>
+                    <p id="settings-success" class="hidden text-emerald-600 text-xs bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2"></p>
+                    <div><label class="text-xs text-slate-500">Nama Sekolah</label><input type="text" name="schoolName" value="${escapeAttr(s.schoolName || '')}" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500"></div>
+                    <div><label class="text-xs text-slate-500">Tajuk Hero</label><input type="text" name="heroTitle" value="${escapeAttr(s.heroTitle || '')}" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500"></div>
+                    <div><label class="text-xs text-slate-500">Sub-tajuk Hero</label><input type="text" name="heroSubtitle" value="${escapeAttr(s.heroSubtitle || '')}" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500"></div>
+                    <div><label class="text-xs text-slate-500">URL / Drive File ID Gambar Latar Hero</label><input type="text" name="heroImage" value="${escapeAttr(s.heroImage || '')}" placeholder="https://... ATAU Drive file ID" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500"></div>
+                    <div><label class="text-xs text-slate-500">Teks Ticker / Pengumuman</label><textarea name="tickerMessage" rows="2" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500">${escapeHtml(s.tickerMessage || '')}</textarea></div>
+                    <div><label class="text-xs text-slate-500">Teks Footer</label><input type="text" name="footerText" value="${escapeAttr(s.footerText || '')}" placeholder="Copyright © Nama Sekolah 2026" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500"></div>
+                    <div><label class="text-xs text-slate-500">Emel Admin (notifikasi &amp; reset password)</label><input type="email" name="contactEmail" value="${escapeAttr(s.contactEmail || '')}" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500"></div>
+                    <div><label class="text-xs text-slate-500">ID Folder Google Drive (induk, utk gambar bilik &amp; logo)</label><input type="text" name="driveParentFolderId" value="${escapeAttr(s.driveParentFolderId || '')}" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500"></div>
+                    <button type="submit" class="w-full bg-blue-600 text-white font-bold rounded-xl py-2.5 text-sm hover:bg-blue-700">Simpan Tetapan</button>
+                </form>
+
+                <h3 class="font-bold text-slate-800 mt-6 mb-3 text-sm">Akaun Saya</h3>
+                <form id="change-password-form" onsubmit="handleChangePassword(event)" class="space-y-3 bg-white p-4 rounded-2xl border border-ice-200/60 shadow-soft mb-4">
+                    <p id="change-password-error" class="hidden text-red-600 text-xs bg-red-50 border border-red-100 rounded-lg px-3 py-2"></p>
+                    <p id="change-password-success" class="hidden text-emerald-600 text-xs bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2"></p>
+                    <input type="password" name="oldPassword" required placeholder="Password Semasa" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-4 py-2.5 text-sm outline-none focus:border-blue-500">
+                    <input type="password" name="newPassword" required minlength="6" placeholder="Password Baru (min 6 aksara)" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-4 py-2.5 text-sm outline-none focus:border-blue-500">
+                    <button type="submit" class="w-full bg-slate-800 text-white font-bold rounded-xl py-2.5 text-sm hover:bg-slate-900 transition-colors">Kemaskini Password</button>
+                </form>
+            `;
+            // Nota: butang "Log Keluar" v2.2 dah pindah jadi ikon KEKAL kat header Admin Panel
+            // (nampak pada SEMUA tab, bukan setakat terkubur dlm hujung Tetapan) — lihat view-admin.
+        }
+
+        async function handleUploadLogo(e) {
+            const file = e.target.files[0];
+            e.target.value = '';
+            if (!file) return;
+            if (!file.type.startsWith('image/')) { showToast('Ralat', 'Sila pilih fail imej.', 'error'); return; }
+            const msg = document.getElementById('logo-upload-msg');
+            msg.classList.remove('hidden');
+            msg.className = 'text-xs rounded-lg px-3 py-2 mt-2 bg-blue-50 text-blue-600';
+            msg.textContent = 'Sedang upload logo...';
+            try {
+                const base64 = await resizeImageFile(file, 512, 0.85);
+                const res = await apiCall('adminUploadLogo', { base64Data: base64, mimeType: 'image/jpeg', filename: file.name || 'logo.jpg' }, true);
+                if (!res.ok) { msg.className = 'text-xs rounded-lg px-3 py-2 mt-2 bg-red-50 text-red-600'; msg.textContent = res.error || 'Gagal upload logo.'; return; }
+                msg.className = 'text-xs rounded-lg px-3 py-2 mt-2 bg-emerald-50 text-emerald-600';
+                msg.textContent = 'Logo dikemaskini.';
+                await refreshInitData();
+                renderAdminSettings();
+            } catch (err) {
+                msg.className = 'text-xs rounded-lg px-3 py-2 mt-2 bg-red-50 text-red-600';
+                msg.textContent = err.message || 'Gagal proses gambar.';
+            }
+        }
+
+        async function handleSaveSettings(e) {
+            e.preventDefault();
+            clearFormError('settings-error');
+            document.getElementById('settings-success').classList.add('hidden');
+            const form = e.target;
+            const settings = {
+                schoolName: form.elements['schoolName'].value, heroTitle: form.elements['heroTitle'].value,
+                heroSubtitle: form.elements['heroSubtitle'].value, heroImage: form.elements['heroImage'].value,
+                tickerMessage: form.elements['tickerMessage'].value, footerText: form.elements['footerText'].value,
+                contactEmail: form.elements['contactEmail'].value, driveParentFolderId: form.elements['driveParentFolderId'].value
+            };
+            const res = await apiCall('adminUpdateSettings', { settings: settings }, true);
+            if (!res.ok) { showFormError('settings-error', res.error); return; }
+            await refreshInitData();
+            const succ = document.getElementById('settings-success');
+            succ.textContent = 'Tetapan berjaya disimpan.';
+            succ.classList.remove('hidden');
+        }
+
+        // --- Admin: Audit Log ---
+        async function renderAdminAuditLog() {
+            const content = document.getElementById('admin-tab-content');
+            const res = await apiCall('adminListAuditLog', { limit: 100 }, true);
+            if (!res.ok) { content.innerHTML = adminErrorBlock(res.error); return; }
+            if (!res.data.length) { content.innerHTML = '<div class="bg-white rounded-2xl border border-ice-200/60 p-8 text-center"><p class="text-sm text-slate-400">Belum ada rekod log.</p></div>'; return; }
+            const actionLabels = {
+                'room.add': 'Tambah Bilik', 'room.update': 'Kemaskini Bilik', 'room.delete': 'Padam Bilik (Kekal)',
+                'room.image.add': 'Tambah Gambar Bilik', 'room.image.delete': 'Padam Gambar Bilik',
+                'settings.update': 'Kemaskini Tetapan', 'settings.logo.update': 'Tukar Logo', 'timeslots.update': 'Kemaskini Jadual Masa',
+                'blockedDate.add': 'Tambah Tarikh Off', 'blockedDate.remove': 'Buang Tarikh Off',
+                'user.role': 'Tukar Role Pengguna', 'user.status': 'Tukar Status Pengguna', 'booking.status': 'Kemaskini Status Tempahan'
+            };
+            const rows = res.data.map(a => {
+                const when = new Date(a.timestamp);
+                const whenStr = isNaN(when.getTime()) ? '' : when.toLocaleString('ms-MY');
+                const detailsStr = a.details ? (typeof a.details === 'string' ? a.details : JSON.stringify(a.details)) : '';
+                return `
+                    <div class="p-3.5">
+                        <div class="flex justify-between items-start gap-2 mb-1">
+                            <p class="font-bold text-slate-800 text-xs">${escapeHtml(actionLabels[a.action] || a.action)}</p>
+                            <p class="text-[10px] text-slate-400 shrink-0">${escapeHtml(whenStr)}</p>
+                        </div>
+                        <p class="text-[11px] text-slate-500">${escapeHtml(a.actorEmail)}</p>
+                        ${detailsStr ? `<p class="text-[10px] text-slate-400 mt-1 truncate" title="${escapeAttr(detailsStr)}">${escapeHtml(detailsStr)}</p>` : ''}
+                    </div>`;
+            }).join('');
+            content.innerHTML = `<div class="bg-white rounded-2xl border border-ice-200/60 shadow-soft divide-y divide-ice-100 overflow-hidden">${rows}</div><p class="text-[11px] text-slate-400 text-center mt-2">Memaparkan sehingga 100 rekod terkini.</p>`;
+        }
+
+        // --- Init App ---
+        function hideBootLoader() {
+            const el = document.getElementById('boot-loader');
+            if (!el) return;
+            el.style.opacity = '0';
+            setTimeout(() => { el.style.display = 'none'; }, 400);
+        }
+
+        window.onload = async () => {
+            try {
+                if (!isBackendConfigured()) document.getElementById('demo-banner').classList.remove('hidden');
+                loadSession();
+                await loadInitData();
+                applySettingsToDom();
+                renderHomeRooms();
+                updateNavForAuthState();
+                setupGallerySwipe();
+                navigate('home');
+
+                // Simpan logo semasa utk boot-loader lawatan AKAN DATANG papar terus drpd cache
+                // (tengok snippet kecil selepas <body>) — bukan kritikal kalau localStorage disekat.
+                try {
+                    const logoId = state.initData && state.initData.settings ? state.initData.settings.schoolLogo : '';
+                    if (logoId) localStorage.setItem('sfs_last_logo', logoId); else localStorage.removeItem('sfs_last_logo');
+                } catch (e) {}
+
+                if ('serviceWorker' in navigator) {
+                    navigator.serviceWorker.register('sw.js').catch(() => { /* senyap kalau gagal — bukan kritikal */ });
+                }
+            } finally {
+                // WAJIB dlm finally — kalau loadInitData() gagal teruk ke apa2 pun tercicir,
+                // jangan biar user tersekat tengok loading logo selama-lamanya.
+                hideBootLoader();
+            }
+        };
+    </script>
+</body>
+</html>
