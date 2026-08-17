@@ -688,7 +688,7 @@
         // disimpan) supaya boleh preview UI tanpa backend. Lihat SETUP.md.
         // =================================================================
         const CONFIG = {
-            API_URL: 'https://script.google.com/macros/s/AKfycby1tz9tLkxXHO60wwEE6KvYAKJGv-mkSOnOMrVc7qpnSGe-9NSu_wEULrOwg7AeIZr6/exec'
+            API_URL: 'https://script.google.com/macros/s/AKfycbwCK63EiuAj6QoyRQTTfD9CaXVTLNDPcd3XtKMYgpN5UZ8W81e8SGtHujuHzPKK8PyY/exec'
         };
 
         function isBackendConfigured() {
@@ -959,6 +959,41 @@
             </div>`;
         }
 
+        // --- v2.5: Loading state pada butang (elak user klik 2-3 kali sbb tak pasti) ---
+        // Tukar isi butang jadi spinner "spark" yg SAMA rupa dgn boot-loader app (konsisten
+        // dgn identiti visual sedia ada) + disable butang tu selagi permintaan belum selesai.
+        // Pulangkan function restore() — WAJIB dipanggil dlm `finally` supaya butang pulih
+        // walaupun API gagal/baling error.
+        function setBtnLoading(btn, label) {
+            if (!btn) return function () {};
+            const originalHtml = btn.innerHTML;
+            const wasDisabled = btn.disabled;
+            btn.disabled = true;
+            btn.innerHTML = `<span class="spark-loader spark-sm" style="margin:0"><span class="spark-face" style="background:transparent;box-shadow:none"></span><span class="spark-ring"></span></span> ${escapeHtml(label || 'Memproses...')}`;
+            return function restore() {
+                // isConnected: kalau butang tu dah hilang drpd DOM (cth. tab admin di-render
+                // semula lepas simpan berjaya, atau butang modal diganti cloneNode), restore
+                // tak bermakna — & boleh "hidupkan" elemen hantu. Senyap sahaja.
+                if (!btn.isConnected) return;
+                btn.disabled = wasDisabled;
+                btn.innerHTML = originalHtml;
+            };
+        }
+
+        async function runWithBtnLoading(btn, label, fn) {
+            const restore = setBtnLoading(btn, label);
+            try {
+                return await fn();
+            } finally {
+                restore();
+            }
+        }
+
+        // Versi utk borang: cari sendiri butang submit dlm borang tu.
+        function submitBtnOf(formEl) {
+            return formEl ? formEl.querySelector('button[type="submit"]') : null;
+        }
+
         // --- Toast (notis ringkas, cth: sebab tarikh off) ---
         let toastTimer = null;
         function showToast(title, msg, kind) {
@@ -973,13 +1008,37 @@
         }
 
         // --- Confirm modal generik (ganti native confirm() utk tindakan musnah) ---
+        // v2.5: modal KEKAL terbuka dgn spinner pada butang "Sahkan" selagi onConfirm belum
+        // selesai (dulu: tutup dulu, lepas tu baru jalan — user tak nampak apa2 berlaku &
+        // boleh klik benda lain). Ni terus bagi loading kpd SEMUA tindakan confirm-driven
+        // sekali gus: padam bilik/gambar/tarikh-off/nama guru/tempahan lama/log audit.
+        //
+        // confirmModalToken: kes khas bila onConfirm sendiri buka confirm-modal BARU
+        // (cth. handleDeleteRoomHard -> "bilik ada tempahan, padam jugak?"). Tanpa token ni,
+        // baris "tutup" milik modal LAMA akan tersilap tutup modal BARU yg baru terbuka tu.
+        let confirmModalToken = 0;
+        let confirmOkPristineHtml = null;
         function showConfirmModal(title, msg, onConfirm) {
+            const myToken = ++confirmModalToken;
             document.getElementById('confirm-modal-title').textContent = title;
             document.getElementById('confirm-modal-msg').textContent = msg;
             const okBtn = document.getElementById('confirm-modal-ok');
+            if (confirmOkPristineHtml === null) confirmOkPristineHtml = okBtn.innerHTML;
             const newOk = okBtn.cloneNode(true);
+            // PENTING: cloneNode salin keadaan SEMASA butang — termasuk disabled + isi spinner
+            // kalau modal ni dibuka DARI DALAM onConfirm modal sebelumnya (kes bersarang:
+            // "bilik ada tempahan, padam jugak?"). Tanpa reset ni, butang "Sahkan" modal baru
+            // tu lahir dlm keadaan MATI (disabled selamanya) & user tak boleh sahkan apa2.
+            newOk.disabled = false;
+            newOk.innerHTML = confirmOkPristineHtml;
             okBtn.parentNode.replaceChild(newOk, okBtn);
-            newOk.addEventListener('click', () => { closeConfirmModal(); onConfirm(); });
+            newOk.addEventListener('click', async () => {
+                try {
+                    await runWithBtnLoading(newOk, 'Memproses...', () => onConfirm());
+                } finally {
+                    if (confirmModalToken === myToken) closeConfirmModal();
+                }
+            });
             document.getElementById('confirm-modal').classList.remove('hidden');
         }
         function closeConfirmModal() { document.getElementById('confirm-modal').classList.add('hidden'); }
@@ -1004,18 +1063,31 @@
         function closeTodayUsageModal() { document.getElementById('today-usage-modal').classList.add('hidden'); }
 
         // --- Prompt modal generik (ganti native prompt()) ---
+        // v2.5: sama macam confirm-modal — kekal terbuka dgn spinner pada "Simpan" selagi
+        // onConfirm berjalan (cth. tukar nama guru), baru tutup.
+        let promptModalToken = 0;
+        let promptOkPristineHtml = null;
         function showPromptModal(title, defaultValue, onConfirm) {
+            const myToken = ++promptModalToken;
             document.getElementById('prompt-modal-title').textContent = title;
             const input = document.getElementById('prompt-modal-input');
             input.value = defaultValue || '';
             const okBtn = document.getElementById('prompt-modal-ok');
+            if (promptOkPristineHtml === null) promptOkPristineHtml = okBtn.innerHTML;
             const newOk = okBtn.cloneNode(true);
+            // Sama sebab macam confirm-modal di atas — reset keadaan yg mungkin tersalin
+            // drpd butang yg sedang "loading" semasa modal ni dibuka.
+            newOk.disabled = false;
+            newOk.innerHTML = promptOkPristineHtml;
             okBtn.parentNode.replaceChild(newOk, okBtn);
-            newOk.addEventListener('click', () => {
+            newOk.addEventListener('click', async () => {
                 const val = input.value.trim();
                 if (!val) return;
-                closePromptModal();
-                onConfirm(val);
+                try {
+                    await runWithBtnLoading(newOk, 'Menyimpan...', () => onConfirm(val));
+                } finally {
+                    if (promptModalToken === myToken) closePromptModal();
+                }
             });
             document.getElementById('prompt-modal').classList.remove('hidden');
             setTimeout(() => input.focus(), 50);
@@ -1595,14 +1667,16 @@
             clearFormError('login-error');
             document.getElementById('login-error').className = 'hidden text-xs rounded-lg px-3 py-2';
             const form = e.target;
-            const res = await apiCall('login', { email: form.elements['email'].value, password: form.elements['password'].value }, false);
-            if (!res.ok) {
-                document.getElementById('login-error').className = 'text-red-600 text-xs bg-red-50 border border-red-100 rounded-lg px-3 py-2';
-                showFormError('login-error', res.error);
-                return;
-            }
-            saveSession(res.data.token, { email: res.data.email, name: res.data.name, role: res.data.role, department: res.data.department || '', phone: res.data.phone || '' });
-            afterAuthSuccess();
+            await runWithBtnLoading(submitBtnOf(form), 'Log masuk...', async () => {
+                const res = await apiCall('login', { email: form.elements['email'].value, password: form.elements['password'].value }, false);
+                if (!res.ok) {
+                    document.getElementById('login-error').className = 'text-red-600 text-xs bg-red-50 border border-red-100 rounded-lg px-3 py-2';
+                    showFormError('login-error', res.error);
+                    return;
+                }
+                saveSession(res.data.token, { email: res.data.email, name: res.data.name, role: res.data.role, department: res.data.department || '', phone: res.data.phone || '' });
+                afterAuthSuccess();
+            });
         }
 
         // v2.3: Setup Wizard admin pertama — hanya boleh berjaya sekali (backend tolak
@@ -1617,23 +1691,25 @@
             const confirmPassword = form.elements['confirmPassword'].value;
             if (password !== confirmPassword) { showFormError('setup-error', 'Password & sahkan password tidak sepadan.'); return; }
 
-            const res = await apiCall('setupFirstAdmin', {
-                name: form.elements['name'].value, email: form.elements['email'].value, password: password
-            }, false);
-            if (!res.ok) {
-                showFormError('setup-error', res.error);
-                // Kalau server dah ada admin (race condition / dah setup di tab/peranti lain),
-                // "downgrade" senyap ke borang login biasa supaya user boleh terus log masuk.
-                if (res.code === 'SETUP_ALREADY_DONE') {
-                    state.initData.needsSetup = false;
-                    setTimeout(() => setAuthMode('login'), 1500);
+            await runWithBtnLoading(submitBtnOf(form), 'Mencipta akaun...', async () => {
+                const res = await apiCall('setupFirstAdmin', {
+                    name: form.elements['name'].value, email: form.elements['email'].value, password: password
+                }, false);
+                if (!res.ok) {
+                    showFormError('setup-error', res.error);
+                    // Kalau server dah ada admin (race condition / dah setup di tab/peranti lain),
+                    // "downgrade" senyap ke borang login biasa supaya user boleh terus log masuk.
+                    if (res.code === 'SETUP_ALREADY_DONE') {
+                        state.initData.needsSetup = false;
+                        setTimeout(() => setAuthMode('login'), 1500);
+                    }
+                    return;
                 }
-                return;
-            }
-            state.initData.needsSetup = false;
-            saveSession(res.data.token, { email: res.data.email, name: res.data.name, role: res.data.role, department: res.data.department || '', phone: res.data.phone || '' });
-            showToast('Berjaya', 'Akaun admin dicipta. Selamat datang!', 'success');
-            afterAuthSuccess();
+                state.initData.needsSetup = false;
+                saveSession(res.data.token, { email: res.data.email, name: res.data.name, role: res.data.role, department: res.data.department || '', phone: res.data.phone || '' });
+                showToast('Berjaya', 'Akaun admin dicipta. Selamat datang!', 'success');
+                afterAuthSuccess();
+            });
         }
 
         async function handleForgotRequest(e) {
@@ -1641,22 +1717,26 @@
             clearFormError('forgot-request-error');
             const form = e.target;
             forgotEmail = form.elements['email'].value;
-            const res = await apiCall('requestPasswordReset', { email: forgotEmail }, false);
-            if (!res.ok) { showFormError('forgot-request-error', res.error); return; }
-            setAuthMode('forgot-confirm');
+            await runWithBtnLoading(submitBtnOf(form), 'Menghantar...', async () => {
+                const res = await apiCall('requestPasswordReset', { email: forgotEmail }, false);
+                if (!res.ok) { showFormError('forgot-request-error', res.error); return; }
+                setAuthMode('forgot-confirm');
+            });
         }
 
         async function handleForgotConfirm(e) {
             e.preventDefault();
             clearFormError('forgot-confirm-error');
             const form = e.target;
-            const res = await apiCall('confirmPasswordReset', { email: forgotEmail, resetCode: form.elements['resetCode'].value, newPassword: form.elements['newPassword'].value }, false);
-            if (!res.ok) { showFormError('forgot-confirm-error', res.error); return; }
-            setAuthMode('login');
-            const el = document.getElementById('login-error');
-            el.className = 'text-emerald-600 text-xs bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2';
-            el.textContent = 'Password berjaya ditetapkan semula. Sila log masuk.';
-            el.classList.remove('hidden');
+            await runWithBtnLoading(submitBtnOf(form), 'Menyimpan...', async () => {
+                const res = await apiCall('confirmPasswordReset', { email: forgotEmail, resetCode: form.elements['resetCode'].value, newPassword: form.elements['newPassword'].value }, false);
+                if (!res.ok) { showFormError('forgot-confirm-error', res.error); return; }
+                setAuthMode('login');
+                const el = document.getElementById('login-error');
+                el.className = 'text-emerald-600 text-xs bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2';
+                el.textContent = 'Password berjaya ditetapkan semula. Sila log masuk.';
+                el.classList.remove('hidden');
+            });
         }
 
         function handleLogout() {
@@ -1807,15 +1887,17 @@
             const resultsEl = document.getElementById('status-check-results');
             resultsEl.innerHTML = loaderHtml({ small: true, label: 'Menyemak...' });
 
-            const res = await apiCall('checkBookingStatus', { identifier: identifier }, false);
-            if (!res.ok) {
-                resultsEl.innerHTML = '';
-                showFormError('status-check-error', res.error || 'Gagal menyemak status.');
-                return;
-            }
-            statusCheckCache = res.data || [];
-            statusCheckIdentifier = identifier;
-            renderStatusCheckResults();
+            await runWithBtnLoading(submitBtnOf(form), 'Menyemak...', async () => {
+                const res = await apiCall('checkBookingStatus', { identifier: identifier }, false);
+                if (!res.ok) {
+                    resultsEl.innerHTML = '';
+                    showFormError('status-check-error', res.error || 'Gagal menyemak status.');
+                    return;
+                }
+                statusCheckCache = res.data || [];
+                statusCheckIdentifier = identifier;
+                renderStatusCheckResults();
+            });
         }
 
         function renderStatusCheckResults() {
@@ -1858,12 +1940,14 @@
             clearFormError('change-password-error');
             document.getElementById('change-password-success').classList.add('hidden');
             const form = e.target;
-            const res = await apiCall('changePassword', { oldPassword: form.elements['oldPassword'].value, newPassword: form.elements['newPassword'].value }, true);
-            if (!res.ok) { showFormError('change-password-error', res.error); return; }
-            form.reset();
-            const succ = document.getElementById('change-password-success');
-            succ.textContent = 'Password berjaya dikemaskini.';
-            succ.classList.remove('hidden');
+            await runWithBtnLoading(submitBtnOf(form), 'Menyimpan...', async () => {
+                const res = await apiCall('changePassword', { oldPassword: form.elements['oldPassword'].value, newPassword: form.elements['newPassword'].value }, true);
+                if (!res.ok) { showFormError('change-password-error', res.error); return; }
+                form.reset();
+                const succ = document.getElementById('change-password-success');
+                succ.textContent = 'Password berjaya dikemaskini.';
+                succ.classList.remove('hidden');
+            });
         }
 
         // --- Admin panel ---
@@ -1915,8 +1999,8 @@
                 const room = ((state.initData.rooms || []).find(r => r.id === b.roomId) || {}).name || b.roomId;
                 const actions = b.status === 'pending' ? `
                     <div class="flex gap-2 mt-3">
-                        <button onclick="adminSetBookingStatus('${b.id}','approved')" class="flex-1 bg-emerald-600 text-white text-xs font-bold py-2 rounded-lg hover:bg-emerald-700">Lulus</button>
-                        <button onclick="adminSetBookingStatus('${b.id}','rejected')" class="flex-1 bg-red-500 text-white text-xs font-bold py-2 rounded-lg hover:bg-red-600">Tolak</button>
+                        <button onclick="adminSetBookingStatus(this,'${b.id}','approved')" class="flex-1 bg-emerald-600 text-white text-xs font-bold py-2 rounded-lg hover:bg-emerald-700">Lulus</button>
+                        <button onclick="adminSetBookingStatus(this,'${b.id}','rejected')" class="flex-1 bg-red-500 text-white text-xs font-bold py-2 rounded-lg hover:bg-red-600">Tolak</button>
                     </div>` : '';
                 return `
                     <div class="p-4">
@@ -1991,7 +2075,8 @@
                 showFormError('delete-old-bookings-error', 'Pilih sekurang-kurangnya satu status, atau tanda "Semua Status".');
                 return;
             }
-            const res = await apiCall('adminDeleteOldBookings', Object.assign({ dryRun: true }, payload), true);
+            const res = await runWithBtnLoading(submitBtnOf(e.target), 'Menyemak...', () =>
+                apiCall('adminDeleteOldBookings', Object.assign({ dryRun: true }, payload), true));
             if (!res.ok) { showFormError('delete-old-bookings-error', res.error); return; }
 
             if (res.data.count === 0) {
@@ -2051,7 +2136,11 @@
             doc.save(`tempahan-${state.adminBookingFilter}-${fmtDateStr(new Date())}.pdf`);
         }
 
-        async function adminSetBookingStatus(bookingId, status) {
+        async function adminSetBookingStatus(btn, bookingId, status) {
+            return runWithBtnLoading(btn, status === 'approved' ? 'Meluluskan...' : 'Memproses...', () => adminSetBookingStatusInner(bookingId, status));
+        }
+
+        async function adminSetBookingStatusInner(bookingId, status) {
             const res = await apiCall('adminUpdateBookingStatus', { bookingId: bookingId, status: status }, true);
             if (!res.ok) { showToast('Gagal', res.error || 'Gagal kemaskini status.', 'error'); return; }
             renderAdminBookings();
@@ -2170,7 +2259,7 @@
                     <p class="text-xs text-slate-500 mb-3">${escapeHtml(r.features)}</p>
                     <div class="flex gap-2">
                         <button onclick="toggleEditRoomForm('${r.id}')" class="flex-1 bg-blue-50 text-blue-700 text-xs font-bold py-2 rounded-lg hover:bg-blue-100">Edit</button>
-                        <button onclick="adminToggleRoomStatus('${r.id}','${r.status}')" class="flex-1 bg-slate-100 text-slate-700 text-xs font-bold py-2 rounded-lg hover:bg-slate-200">${r.status === 'active' ? 'Nyahaktifkan' : 'Aktifkan'}</button>
+                        <button onclick="adminToggleRoomStatus(this,'${r.id}','${r.status}')" class="flex-1 bg-slate-100 text-slate-700 text-xs font-bold py-2 rounded-lg hover:bg-slate-200">${r.status === 'active' ? 'Nyahaktifkan' : 'Aktifkan'}</button>
                         <button onclick="handleDeleteRoomHard('${r.id}', false)" class="bg-red-50 text-red-600 text-xs font-bold py-2 px-3 rounded-lg hover:bg-red-100" title="Padam Kekal"><i class="ph ph-trash"></i></button>
                     </div>
                     ${roomImagesManagerHtml(r)}
@@ -2209,27 +2298,33 @@
             e.preventDefault();
             clearFormError('add-room-error');
             const form = e.target;
-            const res = await apiCall('adminAddRoom', { name: form.elements['name'].value, type: form.elements['type'].value, capacity: form.elements['capacity'].value, features: form.elements['features'].value }, true);
-            if (!res.ok) { showFormError('add-room-error', res.error); return; }
-            await refreshInitData();
-            renderAdminRooms();
+            await runWithBtnLoading(submitBtnOf(form), 'Menyimpan...', async () => {
+                const res = await apiCall('adminAddRoom', { name: form.elements['name'].value, type: form.elements['type'].value, capacity: form.elements['capacity'].value, features: form.elements['features'].value }, true);
+                if (!res.ok) { showFormError('add-room-error', res.error); return; }
+                await refreshInitData();
+                renderAdminRooms();
+            });
         }
 
         async function handleEditRoom(e, roomId) {
             e.preventDefault();
             const form = e.target;
-            const res = await apiCall('adminUpdateRoom', { roomId: roomId, name: form.elements['name'].value, type: form.elements['type'].value, capacity: form.elements['capacity'].value, features: form.elements['features'].value }, true);
-            if (!res.ok) { showToast('Gagal', res.error || 'Gagal kemaskini bilik.', 'error'); return; }
-            await refreshInitData();
-            renderAdminRooms();
+            await runWithBtnLoading(submitBtnOf(form), 'Menyimpan...', async () => {
+                const res = await apiCall('adminUpdateRoom', { roomId: roomId, name: form.elements['name'].value, type: form.elements['type'].value, capacity: form.elements['capacity'].value, features: form.elements['features'].value }, true);
+                if (!res.ok) { showToast('Gagal', res.error || 'Gagal kemaskini bilik.', 'error'); return; }
+                await refreshInitData();
+                renderAdminRooms();
+            });
         }
 
-        async function adminToggleRoomStatus(roomId, currentStatus) {
+        async function adminToggleRoomStatus(btn, roomId, currentStatus) {
             const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
-            const res = await apiCall('adminUpdateRoom', { roomId: roomId, status: newStatus }, true);
-            if (!res.ok) { showToast('Gagal', res.error || 'Gagal kemaskini bilik.', 'error'); return; }
-            await refreshInitData();
-            renderAdminRooms();
+            await runWithBtnLoading(btn, 'Menyimpan...', async () => {
+                const res = await apiCall('adminUpdateRoom', { roomId: roomId, status: newStatus }, true);
+                if (!res.ok) { showToast('Gagal', res.error || 'Gagal kemaskini bilik.', 'error'); return; }
+                await refreshInitData();
+                renderAdminRooms();
+            });
         }
 
         // --- Admin: Blocked dates ---
@@ -2277,10 +2372,12 @@
             e.preventDefault();
             clearFormError('add-blocked-error');
             const form = e.target;
-            const res = await apiCall('adminAddBlockedDate', { startDate: form.elements['startDate'].value, endDate: form.elements['endDate'].value || form.elements['startDate'].value, roomId: form.elements['roomId'].value, reason: form.elements['reason'].value }, true);
-            if (!res.ok) { showFormError('add-blocked-error', res.error); return; }
-            await refreshInitData();
-            renderAdminBlocked();
+            await runWithBtnLoading(submitBtnOf(form), 'Menyimpan...', async () => {
+                const res = await apiCall('adminAddBlockedDate', { startDate: form.elements['startDate'].value, endDate: form.elements['endDate'].value || form.elements['startDate'].value, roomId: form.elements['roomId'].value, reason: form.elements['reason'].value }, true);
+                if (!res.ok) { showFormError('add-blocked-error', res.error); return; }
+                await refreshInitData();
+                renderAdminBlocked();
+            });
         }
 
         function adminRemoveBlockedDate(id) {
@@ -2365,7 +2462,7 @@
                 <div class="bg-white p-4 rounded-2xl border border-ice-200/60 shadow-soft mb-4 space-y-2">
                     <label class="text-xs text-slate-500 font-semibold">Tambah Nama (satu, ATAU tampal banyak sekali gus)</label>
                     <textarea id="teacher-bulk-input" rows="3" placeholder="Taip satu nama — atau tampal banyak nama, satu nama satu baris" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500"></textarea>
-                    <button onclick="handleBulkAddTeachers()" class="w-full bg-blue-600 text-white font-bold rounded-xl py-2.5 text-sm hover:bg-blue-700">Tambah</button>
+                    <button onclick="handleBulkAddTeachers(this)" class="w-full bg-blue-600 text-white font-bold rounded-xl py-2.5 text-sm hover:bg-blue-700">Tambah</button>
                 </div>
                 ${rows ? `<div class="bg-white rounded-2xl border border-ice-200/60 shadow-soft divide-y divide-ice-100 overflow-hidden">${rows}</div>` : '<div class="bg-white rounded-2xl border border-ice-200/60 p-8 text-center"><p class="text-sm text-slate-400">Senarai kosong lagi — tambah nama di atas.</p></div>'}
             `;
@@ -2375,22 +2472,24 @@
         // sengaja, sebab renderAdminTeachers() kat bawah gantikan SELURUH innerHTML #admin-tab-content
         // (termasuk mana2 <p> mesej di dalamnya) sejurus lepas ni dipanggil. Toast hidup kat DOM
         // ASINGAN (#toast, luar #admin-tab-content) jadi ia SELAMAT drpd "wipe" tu & btul2 nampak.
-        async function handleBulkAddTeachers() {
+        async function handleBulkAddTeachers(btn) {
             const ta = document.getElementById('teacher-bulk-input');
             const names = ta.value.split('\n').map(s => s.trim()).filter(Boolean);
             if (!names.length) {
                 showToast('Tiada Nama', 'Taip sekurang-kurangnya satu nama dulu.', 'warning');
                 return;
             }
-            const res = await apiCall('adminAddTeachers', { names: names }, true);
-            if (!res.ok) {
-                showToast('Gagal', res.error || 'Gagal tambah nama.', 'error');
-                return;
-            }
-            ta.value = '';
-            showToast('Berjaya', `${res.data.added.length} nama ditambah` + (res.data.skipped.length ? `, ${res.data.skipped.length} dah wujud (diabaikan).` : '.'), 'success');
-            await refreshInitData();
-            renderAdminTeachers();
+            await runWithBtnLoading(btn, 'Menambah...', async () => {
+                const res = await apiCall('adminAddTeachers', { names: names }, true);
+                if (!res.ok) {
+                    showToast('Gagal', res.error || 'Gagal tambah nama.', 'error');
+                    return;
+                }
+                ta.value = '';
+                showToast('Berjaya', `${res.data.added.length} nama ditambah` + (res.data.skipped.length ? `, ${res.data.skipped.length} dah wujud (diabaikan).` : '.'), 'success');
+                await refreshInitData();
+                renderAdminTeachers();
+            });
         }
 
         function editTeacherPrompt(id) {
@@ -2440,7 +2539,7 @@
                 <p id="admin-timeslots-msg" class="hidden text-xs rounded-lg px-3 py-2 mb-3"></p>
                 <div id="admin-timeslots-rows">${rows || '<p class="text-sm text-slate-400 text-center py-4">Tiada slot lagi.</p>'}</div>
                 <button onclick="addAdminTimeslot()" class="w-full mt-1 border-2 border-dashed border-ice-300 text-slate-500 font-semibold text-sm py-2.5 rounded-xl hover:border-blue-400 hover:text-blue-600 transition-all"><i class="ph ph-plus-circle"></i> Tambah Slot</button>
-                <button onclick="saveAdminTimeslots()" class="w-full mt-3 bg-blue-600 text-white font-bold rounded-xl py-2.5 text-sm hover:bg-blue-700">Simpan Jadual "${adminTimeslotsDay === 'normal' ? 'Hari Biasa' : 'Jumaat'}"</button>
+                <button onclick="saveAdminTimeslots(this)" class="w-full mt-3 bg-blue-600 text-white font-bold rounded-xl py-2.5 text-sm hover:bg-blue-700">Simpan Jadual "${adminTimeslotsDay === 'normal' ? 'Hari Biasa' : 'Jumaat'}"</button>
                 <p class="text-[11px] text-slate-400 mt-3 px-1">Nota: tanda "Rehat" utk slot bukan-boleh-tempah (cth. waktu rehat/solat) — tempahan berterusan boleh merentasi slot ni secara automatik.</p>
             `;
         }
@@ -2456,16 +2555,18 @@
         }
         function removeAdminTimeslot(idx) { adminTimeslotsDraft[adminTimeslotsDay].splice(idx, 1); renderAdminTimeslotsUI(); }
         function addAdminTimeslot() { adminTimeslotsDraft[adminTimeslotsDay].push({ label: '', disabled: false }); renderAdminTimeslotsUI(); }
-        async function saveAdminTimeslots() {
+        async function saveAdminTimeslots(btn) {
             const msg = document.getElementById('admin-timeslots-msg');
             msg.classList.add('hidden');
             const slots = adminTimeslotsDraft[adminTimeslotsDay].filter(s => s.label.trim());
-            const res = await apiCall('adminUpdateTimeslots', { day: adminTimeslotsDay, slots: slots }, true);
-            msg.classList.remove('hidden');
-            if (!res.ok) { msg.className = 'text-red-600 text-xs bg-red-50 border border-red-100 rounded-lg px-3 py-2 mb-3'; msg.textContent = res.error || 'Gagal simpan.'; return; }
-            msg.className = 'text-emerald-600 text-xs bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 mb-3';
-            msg.textContent = 'Jadual disimpan.';
-            await refreshInitData();
+            await runWithBtnLoading(btn, 'Menyimpan...', async () => {
+                const res = await apiCall('adminUpdateTimeslots', { day: adminTimeslotsDay, slots: slots }, true);
+                msg.classList.remove('hidden');
+                if (!res.ok) { msg.className = 'text-red-600 text-xs bg-red-50 border border-red-100 rounded-lg px-3 py-2 mb-3'; msg.textContent = res.error || 'Gagal simpan.'; return; }
+                msg.className = 'text-emerald-600 text-xs bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 mb-3';
+                msg.textContent = 'Jadual disimpan.';
+                await refreshInitData();
+            });
         }
 
         // --- Admin: Users ---
@@ -2488,8 +2589,8 @@
                         </div>
                     </div>
                     <div class="flex gap-2 mt-2">
-                        <button onclick="adminToggleUserRole('${u.id}','${u.role}')" class="flex-1 bg-slate-100 text-slate-700 text-xs font-bold py-2 rounded-lg hover:bg-slate-200">${u.role === 'admin' ? 'Buang Admin' : 'Jadikan Admin'}</button>
-                        <button onclick="adminToggleUserStatus('${u.id}','${u.status}')" class="flex-1 bg-slate-100 text-slate-700 text-xs font-bold py-2 rounded-lg hover:bg-slate-200">${u.status === 'active' ? 'Nyahaktifkan' : 'Aktifkan'}</button>
+                        <button onclick="adminToggleUserRole(this,'${u.id}','${u.role}')" class="flex-1 bg-slate-100 text-slate-700 text-xs font-bold py-2 rounded-lg hover:bg-slate-200">${u.role === 'admin' ? 'Buang Admin' : 'Jadikan Admin'}</button>
+                        <button onclick="adminToggleUserStatus(this,'${u.id}','${u.status}')" class="flex-1 bg-slate-100 text-slate-700 text-xs font-bold py-2 rounded-lg hover:bg-slate-200">${u.status === 'active' ? 'Nyahaktifkan' : 'Aktifkan'}</button>
                     </div>
                 </div>
             `).join('');
@@ -2520,27 +2621,33 @@
             e.preventDefault();
             clearFormError('add-user-error');
             const form = e.target;
-            const res = await apiCall('adminCreateUser', {
-                name: form.elements['name'].value, email: form.elements['email'].value, password: form.elements['password'].value,
-                department: form.elements['department'].value, phone: form.elements['phone'].value, role: form.elements['role'].value
-            }, true);
-            if (!res.ok) { showFormError('add-user-error', res.error); return; }
-            showToast('Berjaya', 'Akaun pengguna baru dicipta.', 'success');
-            renderAdminUsers();
+            await runWithBtnLoading(submitBtnOf(form), 'Mencipta...', async () => {
+                const res = await apiCall('adminCreateUser', {
+                    name: form.elements['name'].value, email: form.elements['email'].value, password: form.elements['password'].value,
+                    department: form.elements['department'].value, phone: form.elements['phone'].value, role: form.elements['role'].value
+                }, true);
+                if (!res.ok) { showFormError('add-user-error', res.error); return; }
+                showToast('Berjaya', 'Akaun pengguna baru dicipta.', 'success');
+                renderAdminUsers();
+            });
         }
 
-        async function adminToggleUserRole(userId, currentRole) {
+        async function adminToggleUserRole(btn, userId, currentRole) {
             const newRole = currentRole === 'admin' ? 'user' : 'admin';
-            const res = await apiCall('adminSetUserRole', { userId: userId, role: newRole }, true);
-            if (!res.ok) { showToast('Gagal', res.error || 'Gagal kemaskini role.', 'error'); return; }
-            renderAdminUsers();
+            await runWithBtnLoading(btn, 'Menyimpan...', async () => {
+                const res = await apiCall('adminSetUserRole', { userId: userId, role: newRole }, true);
+                if (!res.ok) { showToast('Gagal', res.error || 'Gagal kemaskini role.', 'error'); return; }
+                renderAdminUsers();
+            });
         }
 
-        async function adminToggleUserStatus(userId, currentStatus) {
+        async function adminToggleUserStatus(btn, userId, currentStatus) {
             const newStatus = currentStatus === 'active' ? 'suspended' : 'active';
-            const res = await apiCall('adminSetUserStatus', { userId: userId, status: newStatus }, true);
-            if (!res.ok) { showToast('Gagal', res.error || 'Gagal kemaskini status.', 'error'); return; }
-            renderAdminUsers();
+            await runWithBtnLoading(btn, 'Menyimpan...', async () => {
+                const res = await apiCall('adminSetUserStatus', { userId: userId, status: newStatus }, true);
+                if (!res.ok) { showToast('Gagal', res.error || 'Gagal kemaskini status.', 'error'); return; }
+                renderAdminUsers();
+            });
         }
 
         // --- Admin: Settings (+ logo) ---
@@ -2624,12 +2731,14 @@
                 tickerMessage: form.elements['tickerMessage'].value, footerText: form.elements['footerText'].value,
                 contactEmail: form.elements['contactEmail'].value, driveParentFolderId: form.elements['driveParentFolderId'].value
             };
-            const res = await apiCall('adminUpdateSettings', { settings: settings }, true);
-            if (!res.ok) { showFormError('settings-error', res.error); return; }
-            await refreshInitData();
-            const succ = document.getElementById('settings-success');
-            succ.textContent = 'Tetapan berjaya disimpan.';
-            succ.classList.remove('hidden');
+            await runWithBtnLoading(submitBtnOf(form), 'Menyimpan...', async () => {
+                const res = await apiCall('adminUpdateSettings', { settings: settings }, true);
+                if (!res.ok) { showFormError('settings-error', res.error); return; }
+                await refreshInitData();
+                const succ = document.getElementById('settings-success');
+                succ.textContent = 'Tetapan berjaya disimpan.';
+                succ.classList.remove('hidden');
+            });
         }
 
         // --- Admin: Audit Log ---
@@ -2637,13 +2746,16 @@
             const content = document.getElementById('admin-tab-content');
             const res = await apiCall('adminListAuditLog', { limit: 100 }, true);
             if (!res.ok) { content.innerHTML = adminErrorBlock(res.error); return; }
-            if (!res.data.length) { content.innerHTML = '<div class="bg-white rounded-2xl border border-ice-200/60 p-8 text-center"><p class="text-sm text-slate-400">Belum ada rekod log.</p></div>'; return; }
+            if (!res.data.length) { content.innerHTML = '<div class="bg-white rounded-2xl border border-ice-200/60 p-8 text-center mb-4"><p class="text-sm text-slate-400">Belum ada rekod log.</p></div>' + deleteOldAuditBlockHtml(); return; }
             const actionLabels = {
                 'room.add': 'Tambah Bilik', 'room.update': 'Kemaskini Bilik', 'room.delete': 'Padam Bilik (Kekal)',
                 'room.image.add': 'Tambah Gambar Bilik', 'room.image.delete': 'Padam Gambar Bilik',
                 'settings.update': 'Kemaskini Tetapan', 'settings.logo.update': 'Tukar Logo', 'timeslots.update': 'Kemaskini Jadual Masa',
                 'blockedDate.add': 'Tambah Tarikh Off', 'blockedDate.remove': 'Buang Tarikh Off',
-                'user.role': 'Tukar Role Pengguna', 'user.status': 'Tukar Status Pengguna', 'booking.status': 'Kemaskini Status Tempahan'
+                'user.role': 'Tukar Role Pengguna', 'user.status': 'Tukar Status Pengguna', 'booking.status': 'Kemaskini Status Tempahan',
+                'user.create': 'Cipta Akaun Pengguna', 'setup.firstAdmin': 'Setup Admin Pertama',
+                'teacher.add': 'Tambah Nama Guru', 'teacher.update': 'Kemaskini Nama Guru', 'teacher.delete': 'Padam Nama Guru',
+                'booking.bulkDelete': 'Padam Tempahan Lama (Pukal)', 'audit.bulkDelete': 'Padam Log Audit Lama (Pukal)'
             };
             const rows = res.data.map(a => {
                 const when = new Date(a.timestamp);
@@ -2659,7 +2771,52 @@
                         ${detailsStr ? `<p class="text-[10px] text-slate-400 mt-1 truncate" title="${escapeAttr(detailsStr)}">${escapeHtml(detailsStr)}</p>` : ''}
                     </div>`;
             }).join('');
-            content.innerHTML = `<div class="bg-white rounded-2xl border border-ice-200/60 shadow-soft divide-y divide-ice-100 overflow-hidden">${rows}</div><p class="text-[11px] text-slate-400 text-center mt-2">Memaparkan sehingga 100 rekod terkini.</p>`;
+            content.innerHTML = `<div class="bg-white rounded-2xl border border-ice-200/60 shadow-soft divide-y divide-ice-100 overflow-hidden">${rows}</div><p class="text-[11px] text-slate-400 text-center mt-2 mb-4">Memaparkan sehingga 100 rekod terkini.</p>${deleteOldAuditBlockHtml()}`;
+        }
+
+        // --- v2.5: Padam Log Audit Lama (corak sama dgn Padam Tempahan Lama) ---
+        function deleteOldAuditBlockHtml() {
+            return `
+                <button onclick="document.getElementById('delete-old-audit-form').classList.toggle('hidden')" class="w-full border-2 border-dashed border-red-200 text-red-500 font-semibold text-sm py-3 rounded-2xl hover:border-red-400 hover:bg-red-50 transition-all">
+                    <i class="ph ph-trash"></i> Padam Log Audit Lama
+                </button>
+                <form id="delete-old-audit-form" onsubmit="handleDeleteOldAuditPreview(event)" class="hidden mt-3 space-y-3 bg-white p-4 rounded-2xl border border-ice-200/60 shadow-soft">
+                    <p class="text-xs text-slate-500">Padam rekod log yang lebih lama drpd bilangan bulan di bawah. Anda akan nampak BILANGAN sebenar dulu utk disahkan — tiada apa dipadam pada langkah ni.</p>
+                    <p id="delete-old-audit-error" class="hidden text-red-600 text-xs bg-red-50 border border-red-100 rounded-lg px-3 py-2"></p>
+                    <div>
+                        <label class="text-xs text-slate-500 block mb-1">Padam log lebih lama drpd (bulan)</label>
+                        <input type="number" name="months" min="1" required placeholder="Cth: 6" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500">
+                    </div>
+                    <button type="submit" class="w-full bg-red-600 text-white font-bold rounded-xl py-2.5 text-sm hover:bg-red-700">Semak &amp; Padam</button>
+                    <p class="text-[11px] text-slate-400">Tindakan padam ini sendiri turut direkod dlm log — supaya jejak "siapa kosongkan log & bila" tak hilang.</p>
+                </form>
+            `;
+        }
+
+        async function handleDeleteOldAuditPreview(e) {
+            e.preventDefault();
+            clearFormError('delete-old-audit-error');
+            const months = Number(e.target.elements['months'].value);
+            const res = await runWithBtnLoading(submitBtnOf(e.target), 'Menyemak...', () =>
+                apiCall('adminDeleteOldAuditLogs', { months: months, dryRun: true }, true));
+            if (!res.ok) { showFormError('delete-old-audit-error', res.error); return; }
+
+            if (res.data.count === 0) {
+                showToast('Tiada Rekod', `Tiada log lebih lama drpd ${formatDateLabel(res.data.cutoffDate)}.`, 'warning');
+                return;
+            }
+            showConfirmModal(
+                'Padam Log Audit Lama?',
+                `Anda akan PADAM KEKAL ${res.data.count} rekod log (sebelum ${formatDateLabel(res.data.cutoffDate)}). Tindakan ni TAK BOLEH dibatalkan. Teruskan?`,
+                () => confirmDeleteOldAudit(months)
+            );
+        }
+
+        async function confirmDeleteOldAudit(months) {
+            const res = await apiCall('adminDeleteOldAuditLogs', { months: months, dryRun: false }, true);
+            if (!res.ok) { showToast('Gagal', res.error || 'Gagal padam log audit.', 'error'); return; }
+            showToast('Berjaya', `${res.data.deleted} rekod log telah dipadam.`, 'success');
+            renderAdminAuditLog();
         }
 
         // --- Init App ---
