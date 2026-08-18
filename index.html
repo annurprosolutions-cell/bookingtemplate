@@ -163,6 +163,12 @@
             <i class="ph-fill ph-wrench"></i> Demo Mode — backend belum disambung, data tidak disimpan. Lihat SETUP.md.
         </div>
 
+        <!-- MOD DEMO SERVER (v2.6) — BEZA dgn banner kuning di atas. Banner kuning tu bermakna
+             "backend langsung belum disambung". Banner ni pula muncul bila backend MEMANG
+             tersambung & berfungsi penuh, cuma pemilik sistem hidupkan Script Property
+             DEMO_MODE=true supaya pelawat tak boleh musnahkan data demo. -->
+        <div id="server-demo-banner" class="hidden bg-blue-600 text-white text-[11px] font-bold text-center py-1.5 px-3"></div>
+
         <!-- MAIN CONTENT AREA -->
         <main id="main-content" class="main-content hide-scrollbar">
 
@@ -688,7 +694,7 @@
         // disimpan) supaya boleh preview UI tanpa backend. Lihat SETUP.md.
         // =================================================================
         const CONFIG = {
-            API_URL: 'https://script.google.com/macros/s/AKfycbwCK63EiuAj6QoyRQTTfD9CaXVTLNDPcd3XtKMYgpN5UZ8W81e8SGtHujuHzPKK8PyY/exec'
+            API_URL: 'https://script.google.com/macros/s/AKfycbxvNZNzL30vqPu18KLhPZtpblibgmlhUnC6aOqrRbCJKSTNN2THip08H3aggSqL7X3y/exec'
         };
 
         function isBackendConfigured() {
@@ -717,9 +723,9 @@
         ].map(([label, disabled]) => ({ label, disabled }));
         const DEMO_SETTINGS = {
             heroTitle: 'Selamat Datang,', heroSubtitle: 'Sistem Tempahan Fasiliti Bersepadu',
-            heroImage: 'https://lh3.googleusercontent.com/d/1z1xkqatduSlFhGoihLfxXjt1ArJOP726',
+            heroImage: 'https://i.postimg.cc/sX4mPf42/image.png',
             tickerMessage: 'Pengumuman: Penyelenggaraan pelayan pada hujung minggu ini. Sila buat tempahan awal.',
-            schoolName: 'SMK Wakanda', schoolLogo: '', footerText: 'Copyright © SMK Wakanda (Demo)',
+            schoolName: 'SMK Wakanda', schoolLogo: '', footerText: 'Copyright © SMK Wakanda 2026 (Demo)',
             contactEmail: 'admin@sekolah.edu.my', driveParentFolderId: ''
         };
         const DEMO_TEACHERS = ['Ahmad bin Ismail', 'Chua Mei Ling', 'Fatimah binti Zainal', 'Muthu a/l Krishnan', 'Nurul Ain binti Hassan', 'Tan Wei Jian'];
@@ -1062,6 +1068,28 @@
         }
         function closeTodayUsageModal() { document.getElementById('today-usage-modal').classList.add('hidden'); }
 
+        // --- v2.6: banner Mod Demo (server) ---
+        // Dipanggil masa boot DAN setiap kali status log masuk berubah, sbb mesejnya BEZA
+        // ikut siapa yang sedang guna: pelawat biasa kena sekatan, tapi akaun Owner
+        // terkecuali (lihat pengecualian owner dlm doPost, Code.gs). Kalau banner statik,
+        // owner akan nampak "tindakan dimatikan" padahal semuanya berfungsi utk dia —
+        // mengelirukan.
+        function applyDemoBanner() {
+            const el = document.getElementById('server-demo-banner');
+            if (!el) return;
+            if (!(state.initData && state.initData.demoMode)) { el.classList.add('hidden'); return; }
+
+            const isOwner = !!(state.currentUser && state.currentUser.isOwner);
+            if (isOwner) {
+                el.className = 'bg-amber-500 text-amber-950 text-[11px] font-bold text-center py-1.5 px-3';
+                el.innerHTML = '<i class="ph-fill ph-shield-check"></i> Mod Demo aktif — anda log masuk sebagai Owner, jadi sekatan TIDAK dikenakan pada anda.';
+            } else {
+                el.className = 'bg-blue-600 text-white text-[11px] font-bold text-center py-1.5 px-3';
+                el.innerHTML = '<i class="ph-fill ph-eye"></i> Mod Demo — cuba semua skrin &amp; buat tempahan seperti biasa. Tindakan memadam &amp; tetapan dimatikan.';
+            }
+            el.classList.remove('hidden');
+        }
+
         // --- Prompt modal generik (ganti native prompt()) ---
         // v2.5: sama macam confirm-modal — kekal terbuka dgn spinner pada "Simpan" selagi
         // onConfirm berjalan (cth. tukar nama guru), baru tutup.
@@ -1188,7 +1216,7 @@
         // --- Bootstrap ---
         async function loadInitData() {
             const res = await apiCall('init', {}, false);
-            state.initData = res.ok ? res.data : { rooms: [], settings: {}, timeslotsNormal: [], timeslotsFriday: [], blockedDates: [], todayCount: 0, todayUsage: [], needsSetup: false };
+            state.initData = res.ok ? res.data : { rooms: [], settings: {}, timeslotsNormal: [], timeslotsFriday: [], blockedDates: [], todayCount: 0, todayUsage: [], needsSetup: false, demoMode: false };
             if (!res.ok) console.error('Gagal muatkan data awal:', res.error);
         }
         function applySettingsToDom() {
@@ -1659,6 +1687,7 @@
         // login berjaya terus bawa ke Admin Panel — bukan "sambung balik booking" macam dulu.
         function afterAuthSuccess() {
             updateNavForAuthState();
+            applyDemoBanner(); // mesej banner beza utk Owner vs pelawat — kena dikira semula
             navigate(state.currentUser && state.currentUser.role === 'admin' ? 'admin' : 'home');
         }
 
@@ -1674,7 +1703,7 @@
                     showFormError('login-error', res.error);
                     return;
                 }
-                saveSession(res.data.token, { email: res.data.email, name: res.data.name, role: res.data.role, department: res.data.department || '', phone: res.data.phone || '' });
+                saveSession(res.data.token, { email: res.data.email, name: res.data.name, role: res.data.role, department: res.data.department || '', phone: res.data.phone || '', isOwner: !!res.data.isOwner });
                 afterAuthSuccess();
             });
         }
@@ -1706,7 +1735,7 @@
                     return;
                 }
                 state.initData.needsSetup = false;
-                saveSession(res.data.token, { email: res.data.email, name: res.data.name, role: res.data.role, department: res.data.department || '', phone: res.data.phone || '' });
+                saveSession(res.data.token, { email: res.data.email, name: res.data.name, role: res.data.role, department: res.data.department || '', phone: res.data.phone || '', isOwner: !!res.data.isOwner });
                 showToast('Berjaya', 'Akaun admin dicipta. Selamat datang!', 'success');
                 afterAuthSuccess();
             });
@@ -1742,6 +1771,7 @@
         function handleLogout() {
             clearSession();
             updateNavForAuthState();
+            applyDemoBanner(); // balik ke mesej pelawat biasa lepas owner log keluar
             navigate('home');
         }
 
@@ -2584,14 +2614,20 @@
                             <p class="text-[11px] text-slate-400 truncate">${escapeHtml(u.department || '-')} • ${escapeHtml(u.phone || '-')}</p>
                         </div>
                         <div class="flex flex-col items-end gap-1 shrink-0">
+                            ${u.isOwner ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200"><i class="ph-fill ph-shield-check"></i> OWNER</span>' : ''}
                             <span class="text-[10px] font-bold px-2 py-0.5 rounded ${u.role === 'admin' ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-500'}">${u.role === 'admin' ? 'ADMIN' : 'USER'}</span>
                             <span class="text-[10px] font-bold px-2 py-0.5 rounded ${u.status === 'active' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-500'}">${u.status === 'active' ? 'AKTIF' : 'DINYAHAKTIFKAN'}</span>
                         </div>
                     </div>
-                    <div class="flex gap-2 mt-2">
+                    ${u.isOwner
+                        // Akaun Owner: butang ubah role/status SENGAJA tak dipaparkan langsung.
+                        // Ni cuma lapisan UI — backend (isOwnerEmail_ dlm Admin.gs) tetap yg
+                        // menguatkuasakan, jadi walaupun orang panggil API terus, ia tetap ditolak.
+                        ? '<p class="text-[11px] text-slate-400 mt-2 bg-amber-50/60 border border-amber-100 rounded-lg px-2.5 py-2"><i class="ph ph-info"></i> Akaun Owner sistem — dilindungi daripada dinyahaktifkan atau diturunkan pangkat. Untuk tukar, edit terus dalam Google Sheet.</p>'
+                        : `<div class="flex gap-2 mt-2">
                         <button onclick="adminToggleUserRole(this,'${u.id}','${u.role}')" class="flex-1 bg-slate-100 text-slate-700 text-xs font-bold py-2 rounded-lg hover:bg-slate-200">${u.role === 'admin' ? 'Buang Admin' : 'Jadikan Admin'}</button>
                         <button onclick="adminToggleUserStatus(this,'${u.id}','${u.status}')" class="flex-1 bg-slate-100 text-slate-700 text-xs font-bold py-2 rounded-lg hover:bg-slate-200">${u.status === 'active' ? 'Nyahaktifkan' : 'Aktifkan'}</button>
-                    </div>
+                    </div>`}
                 </div>
             `).join('');
 
@@ -2832,6 +2868,9 @@
                 if (!isBackendConfigured()) document.getElementById('demo-banner').classList.remove('hidden');
                 loadSession();
                 await loadInitData();
+                // v2.6: banner Mod Demo (server) — hanya bila backend sebenar tersambung DAN
+                // pemilik hidupkan DEMO_MODE. Bukan sama dgn banner "backend belum disambung".
+                applyDemoBanner();
                 applySettingsToDom();
                 renderHomeRooms();
                 updateNavForAuthState();
