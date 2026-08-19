@@ -677,6 +677,19 @@
         </div>
     </div>
 
+    <!-- v2.7: Butang WhatsApp melayang. Wrapper ni SENGAJA fixed inset-0 + max-w-[480px] +
+         pointer-events-none: ia "meniru" kotak .app-container supaya butang duduk kat tepi
+         KANAN kad app (bukan tepi kanan skrin desktop yang lebar), tanpa menghalang klik
+         pada apa-apa di bawahnya. Hanya butang itu sendiri yang terima klik.
+         Tersembunyi sepenuhnya kalau nombor WhatsApp tak diisi dalam Tetapan — lihat
+         applyWhatsAppFab(). -->
+    <div id="wa-fab-wrap" class="hidden fixed inset-0 left-1/2 -translate-x-1/2 w-full max-w-[480px] pointer-events-none z-40" style="pointer-events:none">
+        <button id="wa-fab" onclick="openWhatsApp()" aria-label="WhatsApp kami" style="pointer-events:auto"
+            class="pointer-events-auto absolute right-4 bottom-24 w-14 h-14 rounded-full bg-[#25D366] text-white shadow-lg shadow-emerald-900/30 flex items-center justify-center active:scale-95 hover:brightness-105 transition-all">
+            <i class="ph-fill ph-whatsapp-logo text-3xl"></i>
+        </button>
+    </div>
+
     <div id="toast" class="hidden fixed left-1/2 -translate-x-1/2 bottom-24 z-[110] w-[90%] max-w-sm">
         <div id="toast-inner" class="bg-slate-900 text-white rounded-2xl shadow-soft-lg p-4 flex gap-3 items-start">
             <i id="toast-icon" class="ph-fill ph-warning-circle text-xl text-amber-400 shrink-0 mt-0.5"></i>
@@ -694,7 +707,7 @@
         // disimpan) supaya boleh preview UI tanpa backend. Lihat SETUP.md.
         // =================================================================
         const CONFIG = {
-            API_URL: 'https://script.google.com/macros/s/AKfycbxvNZNzL30vqPu18KLhPZtpblibgmlhUnC6aOqrRbCJKSTNN2THip08H3aggSqL7X3y/exec'
+            API_URL: 'https://script.google.com/macros/s/AKfycbwSoaGKnzHUOis00haqxXSNxC6XzzwzaSDvn5GsELb0HstTIAEA079yg20YtllXdns/exec'
         };
 
         function isBackendConfigured() {
@@ -726,7 +739,8 @@
             heroImage: 'https://i.postimg.cc/sX4mPf42/image.png',
             tickerMessage: 'Pengumuman: Penyelenggaraan pelayan pada hujung minggu ini. Sila buat tempahan awal.',
             schoolName: 'SMK Wakanda', schoolLogo: '', footerText: 'Copyright © SMK Wakanda 2026 (Demo)',
-            contactEmail: 'admin@sekolah.edu.my', driveParentFolderId: ''
+            contactEmail: 'admin@sekolah.edu.my', driveParentFolderId: '',
+            whatsapp: '60123456789', whatsappMessage: 'Salam, saya nak tanya pasal tempahan fasiliti.'
         };
         const DEMO_TEACHERS = ['Ahmad bin Ismail', 'Chua Mei Ling', 'Fatimah binti Zainal', 'Muthu a/l Krishnan', 'Nurul Ain binti Hassan', 'Tan Wei Jian'];
         let demoBookings = [];
@@ -1280,6 +1294,7 @@
         async function refreshInitData() {
             await loadInitData();
             applySettingsToDom();
+            applyWhatsAppFab();
             renderHomeRooms();
         }
         function updateNavForAuthState() {
@@ -1291,6 +1306,69 @@
                 adminNav.classList.add('hidden');
                 adminNav.classList.remove('flex');
             }
+        }
+
+        // --- v2.7: Butang WhatsApp ---
+        // Nombor dinormalisasi di sini, BUKAN dipaksa pada admin masa dia taip: orang
+        // Malaysia biasa tulis "012-345 6789" atau "0123456789", tapi wa.me hanya terima
+        // digit format antarabangsa. Kalau bermula dengan "0", kita anggap nombor Malaysia
+        // dan tukar jadi "60...". Nombor yang dah ada kod negara dibiar seadanya.
+        function normalizeWhatsAppNumber(raw) {
+            let d = String(raw || '').replace(/[^0-9]/g, '');
+            if (!d) return '';
+            if (d.charAt(0) === '0') d = '60' + d.slice(1);
+            return d;
+        }
+
+        // Mesej dibina ikut DI MANA pemohon berada masa dia klik — supaya admin tak payah
+        // tanya balik "bilik mana? tarikh bila?" sebelum boleh tolong.
+        function whatsAppContextMessage() {
+            const s = (state.initData && state.initData.settings) || {};
+            const school = s.schoolName || 'sekolah';
+            const general = s.whatsappMessage || ('Salam, saya nak tanya pasal tempahan fasiliti ' + school + '.');
+
+            if (state.currentView !== 'booking') return general;
+
+            const dateStr = state.selectedDate
+                ? (state.selectedDate.getDate() + ' ' + MONTHS[state.selectedDate.getMonth()] + ' ' + state.selectedDate.getFullYear())
+                : '';
+            const timeStr = (state.selectedTimeSlots && state.selectedTimeSlots.length)
+                ? formatSlotRangeClient(state.selectedTimeSlots) : '';
+
+            if (state.selectedRoom && dateStr) {
+                return 'Salam, saya nak tanya pasal tempahan ' + state.selectedRoom.name + ' pada ' + dateStr +
+                    (timeStr ? ' (' + timeStr + ')' : '') + '.';
+            }
+            if (dateStr) {
+                return 'Salam, saya nak tanya pasal fasiliti yang kosong pada ' + dateStr +
+                    (timeStr ? ' (' + timeStr + ')' : '') + '.';
+            }
+            return general;
+        }
+
+        function whatsAppUrl() {
+            const s = (state.initData && state.initData.settings) || {};
+            const num = normalizeWhatsAppNumber(s.whatsapp);
+            if (!num) return '';
+            return 'https://wa.me/' + num + '?text=' + encodeURIComponent(whatsAppContextMessage());
+        }
+
+        function openWhatsApp() {
+            const url = whatsAppUrl();
+            if (!url) { showToast('Belum Disediakan', 'Nombor WhatsApp belum diisi dalam Tetapan.', 'warning'); return; }
+            window.open(url, '_blank', 'noopener');
+        }
+
+        // Dipanggil masa boot & setiap kali tukar skrin. Butang disorok dalam Admin Panel &
+        // skrin log masuk — admin tak perlu WhatsApp dirinya sendiri, dan butang tu cuma
+        // akan menghalang kawalan admin di sudut yang sama.
+        function applyWhatsAppFab() {
+            const wrap = document.getElementById('wa-fab-wrap');
+            if (!wrap) return;
+            const s = (state.initData && state.initData.settings) || {};
+            const hasNumber = !!normalizeWhatsAppNumber(s.whatsapp);
+            const hiddenView = state.currentView === 'admin' || state.currentView === 'auth';
+            wrap.classList.toggle('hidden', !hasNumber || hiddenView);
         }
 
         // --- Navigation ---
@@ -1322,6 +1400,7 @@
             });
 
             state.currentView = view;
+            applyWhatsAppFab();
             // v2.3: bila buka skrin "Log Masuk Admin" tapi sheet Users MASIH kosong (tiada
             // admin lagi), papar Setup Wizard terus instead of borang login yang tak berguna
             // (memang tiada akaun pun utk login) — lihat needsSetup dlm apiInit_ (Code.gs).
@@ -2716,6 +2795,10 @@
                     <div><label class="text-xs text-slate-500">Teks Ticker / Pengumuman</label><textarea name="tickerMessage" rows="2" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500">${escapeHtml(s.tickerMessage || '')}</textarea></div>
                     <div><label class="text-xs text-slate-500">Teks Footer</label><input type="text" name="footerText" value="${escapeAttr(s.footerText || '')}" placeholder="Copyright © Nama Sekolah 2026" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500"></div>
                     <div><label class="text-xs text-slate-500">Emel Admin (notifikasi &amp; reset password)</label><input type="email" name="contactEmail" value="${escapeAttr(s.contactEmail || '')}" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500"></div>
+                    <div><label class="text-xs text-slate-500">No. WhatsApp (butang melayang)</label><input type="text" name="whatsapp" value="${escapeAttr(s.whatsapp || '')}" placeholder="0123456789 atau 60123456789" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500">
+                        <p class="text-[10px] text-slate-400 mt-0.5">Kosongkan untuk sorok butang WhatsApp sepenuhnya. Nombor bermula "0" auto-tukar ke format 60.</p></div>
+                    <div><label class="text-xs text-slate-500">Mesej WhatsApp Lalai</label><input type="text" name="whatsappMessage" value="${escapeAttr(s.whatsappMessage || '')}" placeholder="Salam, saya nak tanya pasal tempahan fasiliti." class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500">
+                        <p class="text-[10px] text-slate-400 mt-0.5">Dipakai bila pemohon belum pilih tarikh/bilik. Kalau dia dah pilih, mesej auto-tukar ikut bilik &amp; tarikh yang dia tengah lihat.</p></div>
                     <div><label class="text-xs text-slate-500">ID Folder Google Drive (induk, utk gambar bilik &amp; logo)</label><input type="text" name="driveParentFolderId" value="${escapeAttr(s.driveParentFolderId || '')}" class="w-full bg-ice-100 shadow-soft-inset border border-transparent rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500"></div>
                     <button type="submit" class="w-full bg-blue-600 text-white font-bold rounded-xl py-2.5 text-sm hover:bg-blue-700">Simpan Tetapan</button>
                 </form>
@@ -2765,7 +2848,8 @@
                 schoolName: form.elements['schoolName'].value, heroTitle: form.elements['heroTitle'].value,
                 heroSubtitle: form.elements['heroSubtitle'].value, heroImage: form.elements['heroImage'].value,
                 tickerMessage: form.elements['tickerMessage'].value, footerText: form.elements['footerText'].value,
-                contactEmail: form.elements['contactEmail'].value, driveParentFolderId: form.elements['driveParentFolderId'].value
+                contactEmail: form.elements['contactEmail'].value, driveParentFolderId: form.elements['driveParentFolderId'].value,
+                whatsapp: form.elements['whatsapp'].value, whatsappMessage: form.elements['whatsappMessage'].value
             };
             await runWithBtnLoading(submitBtnOf(form), 'Menyimpan...', async () => {
                 const res = await apiCall('adminUpdateSettings', { settings: settings }, true);
@@ -2872,6 +2956,7 @@
                 // pemilik hidupkan DEMO_MODE. Bukan sama dgn banner "backend belum disambung".
                 applyDemoBanner();
                 applySettingsToDom();
+                applyWhatsAppFab();
                 renderHomeRooms();
                 updateNavForAuthState();
                 setupGallerySwipe();
